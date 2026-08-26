@@ -5,42 +5,45 @@ on:
     branches: [main]
   pull_request:
 
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
 
 jobs:
-  build-test:
-    name: Build & Test
-    # PalmierPro targets macOS 26 (Tahoe), arm64 only. Requires a macOS 26 runner image.
-    runs-on: macos-26
-    timeout-minutes: 40
+  check:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          fetch-depth: 2
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets
 
-      - name: Show toolchain
-        run: swift --version
+  test:
+    name: test · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache SwiftPM
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+      # Rendering shells out to the ffmpeg binary; every runner needs it on PATH.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
 
-      - name: Check localization
-        run: |
-          localization_args=()
-          if [[ "${{ github.event_name }}" == "pull_request" ]] &&
-             ! git diff --quiet HEAD^1 HEAD -- \
-               ':(glob)Sources/PalmierPro/Resources/Localization/*.lproj/*.strings' \
-               ':(exclude,glob)Sources/PalmierPro/Resources/Localization/en.lproj/*.strings'; then
-            localization_args+=(--require-complete)
-          fi
-          scripts/localization/sync.sh "${localization_args[@]}"
-          git diff --exit-code -- Sources/PalmierPro/Resources/Localization/en.lproj/Localizable.strings
-
-      - name: Test
-        run: swift test
+      - run: ffmpeg -version
+      - run: cargo test --workspace

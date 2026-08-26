@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/xCTbr/palmier-pro-windows"
+
+[workspace.dependencies]
+palmier-core = { path = "crates/palmier-core" }
+palmier-media = { path = "crates/palmier-media" }
+palmier-mcp = { path = "crates/palmier-mcp" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+todo = "warn"
+dbg_macro = "warn"
