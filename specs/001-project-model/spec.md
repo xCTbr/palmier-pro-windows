@@ -101,7 +101,10 @@ Each of these gets a test. This list is the definition of done for the negative 
 ### Functional Requirements
 
 - **FR-001**: The system MUST model every persisted type in the original's `Models/` directory with its exact JSON key names.
-- **FR-002**: The system MUST apply the same default value as the Swift model for every key absent from the input, and MUST reject input missing a key the Swift model requires.
+- **FR-002**: The system MUST reproduce each field's strictness level exactly as audited in `research.md` — required, default-on-missing, or default-on-any-failure — including where levels differ within one type.
+- **FR-002a**: The system MUST apply the same default value as the Swift model for every absent key, and MUST reject input missing a key the Swift model requires.
+- **FR-002b**: The system MUST reproduce the format's two distinct out-of-range policies: coercion to zero for `edgeRounding` and `edgeSoftness`, range clamping for `displayHeight`.
+- **FR-002c**: The system MUST apply `Transform`'s legacy `x`/`y` migration on decode and MUST NOT emit those keys on encode.
 - **FR-003**: The system MUST preserve fields it does not model through a decode/encode round trip, at every level of nesting.
 - **FR-004**: The system MUST accept the legacy bare-`Timeline` document shape and wrap it into a single-timeline project.
 - **FR-005**: The system MUST omit absent optional fields on encode rather than emitting null.
@@ -152,6 +155,16 @@ Named explicitly so the boundary is testable:
 
 ## Open questions
 
-- **Q1**: Which `Clip` keys does Swift's synthesized `Decodable` actually require versus default? Swift does not apply property defaults to missing keys in synthesized decoding, so several fields that look optional may be mandatory. Resolve by auditing each type's decoder before implementing, not by assuming.
-- **Q2**: Does any type rely on a custom `init(from:)` with `try?` fallbacks like `Timeline` does? Each such type has looser decoding than its declaration suggests and must be matched exactly.
-- **Q3**: How is unknown-field preservation represented without polluting every struct? Decide during planning; the requirement is behavioral, not structural.
+- **Q1 — RESOLVED** (see `research.md`): `Clip` has a hand-written decoder in an
+  extension. Only `mediaRef`, `startFrame`, and `durationFrames` are required; every
+  other key falls back to a default via `try?`. The original assumption that
+  synthesized decoding would make most fields mandatory does not apply.
+- **Q2 — RESOLVED** (see `research.md`): eleven types have custom decoders. The format
+  has three distinct strictness levels — required, default-on-missing, and
+  default-on-anything — and the level varies within a single type. This is the central
+  fact the implementation must encode.
+- **Q3 — open**: how unknown-field preservation is represented without polluting every
+  struct. Resolve during planning; the requirement is behavioral, not structural.
+- **Q4 — new, from the audit**: a missing `id` decodes to a freshly generated UUID in
+  `Clip`, `Track`, `Timeline`, and `Effect`, so decoding is not deterministic and
+  SC-002's round-trip comparison needs an explicit policy for generated ids.
