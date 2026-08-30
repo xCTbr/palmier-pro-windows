@@ -1,0 +1,16 @@
+{
+  "timelines": [{
+    "id": "tl-1", "fps": 30, "width": 1920, "height": 1080,
+    "futureTimelineKey": { "nested": [1, 2, 3] },
+    "tracks": [{
+      "type": "video",
+      "futureTrackKey": "keep me",
+      "clips": [{
+        "mediaRef": "a", "startFrame": 0, "durationFrames": 30,
+        "futureClipKey": 42,
+        "transform": { "centerX": 0.5, "futureTransformKey": true }
+      }]
+    }]
+  }],
+  "futureRootKey": "also keep me"
+}

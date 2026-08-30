@@ -20,10 +20,10 @@ binary in `crates/palmier/src/`. Reference source is read-only at
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add `uuid` (v4), `thiserror`, `serde_json` with `preserve_order`, and dev-dependencies `insta` and `proptest` to `crates/palmier-core/Cargo.toml`
-- [ ] T002 [P] Create the module skeleton declared in plan.md — `codec/`, `frames`, `project`, `timeline`, `transform`, `keyframe`, `text`, `effect`, `marker`, `media`, `ids` — as empty modules wired into `crates/palmier-core/src/lib.rs`
-- [ ] T003 [P] Create `crates/palmier-core/tests/fixtures/` with a README stating that fixtures are hand-authored from the Swift decoders and that fixture fidelity is a review concern, not something a test proves
-- [ ] T004 Verify `cargo build` and `cargo clippy --workspace --all-targets -- -D warnings` pass on the skeleton before any model code exists
+- [X] T001 Add `uuid` (v4), `thiserror`, `serde_json` with `preserve_order`, and dev-dependencies `insta` and `proptest` to `crates/palmier-core/Cargo.toml`
+- [X] T002 [P] Create the module skeleton declared in plan.md — `codec/`, `frames`, `project`, `timeline`, `transform`, `keyframe`, `text`, `effect`, `marker`, `media`, `ids` — as empty modules wired into `crates/palmier-core/src/lib.rs`
+- [X] T003 [P] Create `crates/palmier-core/tests/fixtures/` with a README stating that fixtures are hand-authored from the Swift decoders and that fixture fidelity is a review concern, not something a test proves
+- [X] T004 Verify `cargo build` and `cargo clippy --workspace --all-targets -- -D warnings` pass on the skeleton before any model code exists
 
 ---
 
@@ -34,22 +34,22 @@ expressible; nothing else can be written correctly first.
 
 ### Audit completion (blocks modelling)
 
-- [ ] T005 Audit the three nested decoders in `palmier-macos-codebase/Sources/PalmierPro/Models/TextStyle.swift` (lines 87, 134, 163) and append their strictness tables to `specs/001-project-model/research.md`
-- [ ] T006 Audit the ~33 synthesized-`Codable` types under `palmier-macos-codebase/Sources/PalmierPro/Models/`, recording required vs optional per field, and append to `research.md`. Standard Swift rule applies: `Optional` is optional, non-`Optional` is required, declaration defaults are NOT applied
-- [ ] T007 Confirm by reading each type whether an explicit JSON `null` and an absent key are distinguishable anywhere that matters, and record the finding in `research.md` (research.md implication 5)
+- [X] T005 Audit the three nested decoders in `palmier-macos-codebase/Sources/PalmierPro/Models/TextStyle.swift` (lines 87, 134, 163) and append their strictness tables to `specs/001-project-model/research.md`
+- [X] T006 Audit the ~33 synthesized-`Codable` types under `palmier-macos-codebase/Sources/PalmierPro/Models/`, recording required vs optional per field, and append to `research.md`. Standard Swift rule applies: `Optional` is optional, non-`Optional` is required, declaration defaults are NOT applied
+- [X] T007 Confirm by reading each type whether an explicit JSON `null` and an absent key are distinguishable anywhere that matters, and record the finding in `research.md` (research.md implication 5)
 
 ### Frame arithmetic
 
-- [ ] T008 Write failing tests in `crates/palmier-core/tests/frames.rs` for half-open range semantics, `duration = end - start`, zero and negative durations, and `i64` overflow at `startFrame + durationFrames`
-- [ ] T009 Implement `FrameRange` and checked frame arithmetic in `crates/palmier-core/src/frames.rs` so every operation returns an error rather than panicking or wrapping (FR-006, FR-007)
+- [X] T008 Write failing tests in `crates/palmier-core/tests/frames.rs` for half-open range semantics, `duration = end - start`, zero and negative durations, and `i64` overflow at `startFrame + durationFrames`
+- [X] T009 Implement `FrameRange` and checked frame arithmetic in `crates/palmier-core/src/frames.rs` so every operation returns an error rather than panicking or wrapping (FR-006, FR-007)
 
 ### The decoding kernel
 
-- [ ] T010 Write failing tests in `crates/palmier-core/tests/strictness.rs` asserting each helper's behavior on missing key, wrong type, and null, per the three-level table in plan.md
-- [ ] T011 Implement `DecodeError` in `crates/palmier-core/src/codec/error.rs` carrying the JSON path of the offending value, so failures name their location (FR-008)
-- [ ] T012 Implement `take_required`, `take_or_default`, and `take_lenient` in `crates/palmier-core/src/codec/strictness.rs`, each documented with the Swift construct it reproduces
-- [ ] T013 [P] Implement `coerce_unit_interval` (outside `0..=1` becomes `0`) and `clamp_range` in `crates/palmier-core/src/codec/ranges.rs`, with a test asserting the two are NOT interchangeable (FR-002b)
-- [ ] T014 Implement the kernel entry point in `crates/palmier-core/src/codec/mod.rs`: object into `serde_json::Map`, known keys extracted at their strictness, remainder captured as `extra` (FR-003)
+- [X] T010 Write failing tests in `crates/palmier-core/tests/strictness.rs` asserting each helper's behavior on missing key, wrong type, and null, per the three-level table in plan.md
+- [X] T011 Implement `DecodeError` in `crates/palmier-core/src/codec/error.rs` carrying the JSON path of the offending value, so failures name their location (FR-008)
+- [X] T012 Implement `take_required`, `take_or_default`, and `take_lenient` in `crates/palmier-core/src/codec/strictness.rs`, each documented with the Swift construct it reproduces
+- [X] T013 [P] Implement `coerce_unit_interval` (outside `0..=1` becomes `0`) and `clamp_range` in `crates/palmier-core/src/codec/ranges.rs`, with a test asserting the two are NOT interchangeable (FR-002b)
+- [X] T014 Implement the kernel entry point in `crates/palmier-core/src/codec/mod.rs`: object into `serde_json::Map`, known keys extracted at their strictness, remainder captured as `extra` (FR-003)
 
 **Checkpoint**: the kernel and frame math are tested and green. Modelling can begin.
 
@@ -64,31 +64,31 @@ expected structures. Delivers value alone — the project can read real user dat
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Author fixture `crates/palmier-core/tests/fixtures/full.json` exercising every modeled type with non-default values
-- [ ] T016 [P] [US1] Author fixture `legacy-bare-timeline.json` (a bare `Timeline` document) and `legacy-transform-xy.json` (carrying `Transform`'s `x`/`y` keys)
-- [ ] T017 [P] [US1] Author fixtures for the spec's edge cases: empty timeline, zero timelines, clip at frame 0, `i64::MAX` boundary, zero and negative duration, duplicate ids, dangling `mediaRef`, dangling and cyclic nested timelines, unordered and duplicate keyframes, unicode and newline text, empty and truncated files
-- [ ] T018 [US1] Write failing tests in `crates/palmier-core/tests/decoding_contract.rs` asserting per-field strictness from `data-model.md` — including that a `Clip` with `"speed": "fast"` yields `1.0` while a `Transform` with `"width": "wide"` fails
-- [ ] T019 [P] [US1] Write failing tests in `crates/palmier-core/tests/edge_cases.rs` covering all 13 spec edge cases, each asserting the specified outcome rather than merely "does not crash"
-- [ ] T020 [P] [US1] Write a failing test asserting unknown fields survive decode at every nesting depth (FR-003)
+- [X] T015 [P] [US1] Author fixture `crates/palmier-core/tests/fixtures/full.json` exercising every modeled type with non-default values
+- [X] T016 [P] [US1] Author fixture `legacy-bare-timeline.json` (a bare `Timeline` document) and `legacy-transform-xy.json` (carrying `Transform`'s `x`/`y` keys)
+- [X] T017 [P] [US1] Author fixtures for the spec's edge cases: empty timeline, zero timelines, clip at frame 0, `i64::MAX` boundary, zero and negative duration, duplicate ids, dangling `mediaRef`, dangling and cyclic nested timelines, unordered and duplicate keyframes, unicode and newline text, empty and truncated files
+- [X] T018 [US1] Write failing tests in `crates/palmier-core/tests/decoding_contract.rs` asserting per-field strictness from `data-model.md` — including that a `Clip` with `"speed": "fast"` yields `1.0` while a `Transform` with `"width": "wide"` fails
+- [X] T019 [P] [US1] Write failing tests in `crates/palmier-core/tests/edge_cases.rs` covering all 13 spec edge cases, each asserting the specified outcome rather than merely "does not crash"
+- [X] T020 [P] [US1] Write a failing test asserting unknown fields survive decode at every nesting depth (FR-003)
 
 ### Implementation for User Story 1
 
-- [ ] T021 [P] [US1] Implement `ClipType`, `BlendMode`, `Interpolation`, and `TextFillMode` enums in their modules, decoding leniently to their audited defaults
-- [ ] T022 [P] [US1] Implement `Transform` and `Crop` in `crates/palmier-core/src/transform.rs`, including the legacy `x`/`y` migration `centerX = x + width - 0.5` reproduced exactly (FR-002c), using `take_or_default` because this type is strict on wrong types
-- [ ] T023 [P] [US1] Implement `Keyframe`, `KeyframeTrack`, and `AnimPair` in `crates/palmier-core/src/keyframe.rs`, normalizing order on load and tolerating empty, single-point, unordered, and duplicate-frame input
-- [ ] T024 [P] [US1] Implement `TextStyle` and its nested types in `crates/palmier-core/src/text.rs` per the T005 audit
-- [ ] T025 [P] [US1] Implement `TextAnimation`, `WordTiming`, and text layout types in `crates/palmier-core/src/text.rs` — `preset` → `none`, `perWordFrames` → `6`, all lenient
-- [ ] T026 [P] [US1] Implement `Effect`, `EffectParam`, `GradeCurve`, `HueCurves`, and `CurvePoint` in `crates/palmier-core/src/effect.rs` — `type` required, `enabled` → `true`, `params` → `{}`
-- [ ] T027 [P] [US1] Implement `TimelineMarker` in `crates/palmier-core/src/marker.rs` — the strictest type: everything required except `status`
-- [ ] T028 [P] [US1] Implement `MediaManifest`, `MediaManifestEntry`, and `MediaFolder` in `crates/palmier-core/src/media.rs`, all `take_or_default`, resolving no file on disk
-- [ ] T029 [US1] Implement `Clip` in `crates/palmier-core/src/timeline.rs` — only `mediaRef`, `startFrame`, `durationFrames` required; `edgeRounding` and `edgeSoftness` through `coerce_unit_interval`
-- [ ] T030 [US1] Implement `Track` in `crates/palmier-core/src/timeline.rs` — only `type` required, `syncLocked` defaulting to `true`, `displayHeight` through `clamp_range`, and name normalization where an invalid name becomes `None` rather than an error
-- [ ] T031 [US1] Implement `Timeline` and `TimelineViewState` in `crates/palmier-core/src/timeline.rs` — `fps`, `width`, `height`, `tracks` required
-- [ ] T032 [US1] Implement `ProjectFile`, `MulticamSource`, and `SpeakerRegistryEntry` in `crates/palmier-core/src/project.rs`, including the bare-`Timeline` fallback and rejection of a zero-timeline project (FR-004)
-- [ ] T033 [US1] Implement `materialize_ids()` in `crates/palmier-core/src/ids.rs` as a pass separate from decoding, with a test proving decode alone leaves absent ids as `None` (plan.md Q4)
-- [ ] T034 [US1] Implement the loader at the crate boundary in `crates/palmier-core/src/lib.rs` — reads a path, decodes, materializes ids — keeping all filesystem access out of model types (FR-010)
-- [ ] T035 [US1] Implement cross-entity validation from `data-model.md`: at least one timeline, unique ids per scope, non-negative durations, finite `speed`, resolvable and acyclic nested timelines
-- [ ] T036 [US1] Verify every test from T018–T020 passes and report the actual `cargo test` output
+- [X] T021 [P] [US1] Implement `ClipType`, `BlendMode`, `Interpolation`, and `TextFillMode` enums in their modules, decoding leniently to their audited defaults
+- [X] T022 [P] [US1] Implement `Transform` and `Crop` in `crates/palmier-core/src/transform.rs`, including the legacy `x`/`y` migration `centerX = x + width - 0.5` reproduced exactly (FR-002c), using `take_or_default` because this type is strict on wrong types
+- [X] T023 [P] [US1] Implement `Keyframe`, `KeyframeTrack`, and `AnimPair` in `crates/palmier-core/src/keyframe.rs`, normalizing order on load and tolerating empty, single-point, unordered, and duplicate-frame input
+- [X] T024 [P] [US1] Implement `TextStyle` and its nested types in `crates/palmier-core/src/text.rs` per the T005 audit
+- [X] T025 [P] [US1] Implement `TextAnimation`, `WordTiming`, and text layout types in `crates/palmier-core/src/text.rs` — `preset` → `none`, `perWordFrames` → `6`, all lenient
+- [X] T026 [P] [US1] Implement `Effect`, `EffectParam`, `GradeCurve`, `HueCurves`, and `CurvePoint` in `crates/palmier-core/src/effect.rs` — `type` required, `enabled` → `true`, `params` → `{}`
+- [X] T027 [P] [US1] Implement `TimelineMarker` in `crates/palmier-core/src/marker.rs` — the strictest type: everything required except `status`
+- [X] T028 [P] [US1] Implement `MediaManifest`, `MediaManifestEntry`, and `MediaFolder` in `crates/palmier-core/src/media.rs`, all `take_or_default`, resolving no file on disk
+- [X] T029 [US1] Implement `Clip` in `crates/palmier-core/src/timeline.rs` — only `mediaRef`, `startFrame`, `durationFrames` required; `edgeRounding` and `edgeSoftness` through `coerce_unit_interval`
+- [X] T030 [US1] Implement `Track` in `crates/palmier-core/src/timeline.rs` — only `type` required, `syncLocked` defaulting to `true`, `displayHeight` through `clamp_range`, and name normalization where an invalid name becomes `None` rather than an error
+- [X] T031 [US1] Implement `Timeline` and `TimelineViewState` in `crates/palmier-core/src/timeline.rs` — `fps`, `width`, `height`, `tracks` required
+- [X] T032 [US1] Implement `ProjectFile`, `MulticamSource`, and `SpeakerRegistryEntry` in `crates/palmier-core/src/project.rs`, including the bare-`Timeline` fallback and rejection of a zero-timeline project (FR-004)
+- [X] T033 [US1] Implement `materialize_ids()` in `crates/palmier-core/src/ids.rs` as a pass separate from decoding, with a test proving decode alone leaves absent ids as `None` (plan.md Q4)
+- [X] T034 [US1] Implement the loader at the crate boundary in `crates/palmier-core/src/lib.rs` — reads a path, decodes, materializes ids — keeping all filesystem access out of model types (FR-010)
+- [X] T035 [US1] Implement cross-entity validation from `data-model.md`: at least one timeline, unique ids per scope, non-negative durations, finite `speed`, resolvable and acyclic nested timelines
+- [X] T036 [US1] Verify every test from T018–T020 passes and report the actual `cargo test` output
 
 **Checkpoint**: a real macOS project loads intact. US1 is independently shippable.
 

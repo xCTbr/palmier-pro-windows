@@ -119,12 +119,133 @@ into a single-timeline project. A decoded project with zero timelines is rejecte
 5. **`try?` also swallows `null`.** Confirm during implementation whether an explicit
    `null` and an absent key are distinguishable anywhere that matters.
 
-## Not yet audited
+## Still not audited
 
-- The three nested decoders in `Models/TextStyle.swift` (lines 87, 134, 163).
-- The roughly 33 types that use synthesized `Codable`. These follow the standard rule
-  — `Optional` is optional, non-`Optional` is required, no default applied — but each
-  needs a field-by-field pass before it is called done.
 - Encoder behavior for every type other than `Transform`. All others are synthesized,
-  which writes all non-optional keys and omits `nil` optionals, but this was inferred
-  from the language rule rather than read.
+  which writes all non-optional keys and omits `nil` optionals, but this is inferred
+  from the language rule rather than read from a custom implementation, because none
+  exists to read.
+---
+
+# Addendum: T005–T007
+
+Appended 2026-08-28 while executing tasks T005, T006, and T007. Completes the
+"Not yet audited" section above, which is now empty.
+
+## T005 — `TextStyle`'s three nested decoders
+
+All three (`Outline`/border at line 87, `Background` at 134, `TextStyle` itself at
+163) are **fully lenient**: every field is `(try? c.decode(...)) ?? default`, nothing
+is required. `TextStyle`'s own decoder carries the comment *"Missing-key-tolerant
+decode — older files pick up defaults for fields added later"*, which states the
+format's intent directly.
+
+### One field pair cannot be reproduced exactly
+
+`isBold` and `isItalic`, when absent, do not fall back to a constant. They fall back
+to **font introspection**:
+
+```swift
+let inferredTraits = Self.symbolicTraits(fontName: fontName, size: CGFloat(fontSize))
+isBold:   (try? c.decode(Bool.self, forKey: .isBold))   ?? inferredTraits.contains(.traitBold),
+isItalic: (try? c.decode(Bool.self, forKey: .isItalic)) ?? inferredTraits.contains(.traitItalic),
+```
+
+`symbolicTraits` constructs an `NSFont` and reads `CTFontGetSymbolicTraits`. The
+result depends on **which fonts are installed on the machine**, so it is not a pure
+function of the document and cannot be reproduced identically on Windows or Linux —
+not merely because Core Text is absent, but because the same file can decode
+differently on two Macs.
+
+**Decision**: approximate with a font-name token heuristic (`Bold`, `Semibold`,
+`Black`, `Italic`, `Oblique`, and the common PostScript suffixes), and document this
+as the one corner of the format this project knowingly does not reproduce exactly. It
+only applies to files predating the explicit `isBold`/`isItalic` keys; any file
+carrying them decodes identically.
+
+## T006 — synthesized `Codable` types
+
+Twenty types with stored fields use synthesized `Codable`. The Swift rule applies
+strictly: **`Optional` is optional, non-`Optional` is required, and a default value in
+the declaration is NOT applied to a missing key.**
+
+† marks a field that has a default in its declaration which decoding does *not* use.
+Every † field is therefore **required in JSON** despite looking optional in the Swift
+source — the single most common way to get this wrong.
+
+| Type | File | Required | Optional |
+|---|---|---|---|
+| `EffectParam` | Effect.swift | — | `value`, `string`, `track` |
+| `CurvePoint` | GradeCurve.swift | `x`, `y` | — |
+| `GradeCurve` | GradeCurve.swift | `master`†, `red`†, `green`†, `blue`† | — |
+| `HueCurves` | HueCurves.swift | `hueVsHue`†, `hueVsSat`†, `hueVsLum`† | — |
+| `Keyframe` | Keyframe.swift | `frame`, `value`, `interpolationOut`† | — |
+| `KeyframeTrack` | Keyframe.swift | `keyframes`† | — |
+| `AnimPair` | Keyframe.swift | `a`, `b` | — |
+| `MediaFolder` | MediaFolder.swift | `name` | `parentFolderId` |
+| `MediaManifestEntry` | MediaManifest.swift | `name`, `type`, `source`, `duration` | `generationInput`, `sourceWidth`, `sourceHeight`, `sourceFPS`, `hasAudio`, `folderId`, `cachedRemoteURL`, `cachedRemoteURLExpiresAt`, `generationStatus`, `importInput` |
+| `MediaImportInput` | MediaManifest.swift | — | `sourceURL`, `sourcePath`, `createdAt` |
+| `GenerationInput` | MediaManifest.swift | `prompt`, `model`, `duration`, `aspectRatio` | `resolution`, `upscaleSettings`, `upscaleSourceWidth`, `upscaleSourceHeight`, `upscaleSourceFPS`, `quality`, `imageURLs`, `numImages`, `voice`, `lyrics`, `styleInstructions`, `instrumental`, `targetLanguage`, `multilingual`, `audioInput`, `generateAudio`, `draft`, `usesSourceVideo`, `referenceImageURLs`, `referenceVideoURLs`, `referenceAudioURLs`, `imageURLAssetIds`, `referenceImageAssetIds`, `referenceVideoAssetIds`, `referenceAudioAssetIds`, `createdAt`, `backendJobId`, `outputIndex`, `resultURLs`, `costCredits`, `refundedCredits` |
+| `MulticamSource` | MulticamSource.swift | `offsetSeconds`†, `confidence`†, `locked`†, `id`†, `mediaRef`, `kind`, `angleLabel`, `sync`†, `id`†, `name`†, `members`†, `masterMemberId`† | — |
+| `SyncMap` | MulticamSource.swift | `offsetSeconds`†, `confidence`†, `locked`† | — |
+| `Member` | MulticamSource.swift | `id`†, `mediaRef`, `kind`, `angleLabel`, `sync`† | — |
+| `ProjectFile` | ProjectFile.swift | `timelines` | `activeTimelineId`, `openTimelineIds`, `viewStates`, `speakers`, `multicamGroups` |
+| `WordTiming` | TextAnimation.swift | `text`, `startFrame`, `endFrame` | — |
+| `RGBA` | TextStyle.swift | `r`†, `g`†, `b`†, `a`† | — |
+| `Shadow` | TextStyle.swift | `enabled`†, `color`†, `offsetX`†, `offsetY`†, `blur`† | — |
+| `TimelineViewState` | Timeline.swift | `playheadFrame`†, `zoomScale`†, `scrollOffsetX`† | — |
+| `Crop` | Timeline.swift | `left`†, `top`†, `right`†, `bottom`† | — |
+
+`MulticamSource`'s row flattens its nested `SyncMap` and `Member` types; they are
+listed separately as well.
+
+### The finding that matters most
+
+**`RGBA` requires all four of `r`, `g`, `b`, `a`** even though all four carry defaults
+in the declaration. `Crop`, `Shadow`, `TimelineViewState`, `GradeCurve`, `HueCurves`,
+and `KeyframeTrack` are the same shape.
+
+Leniency composes downward, which softens the impact: a malformed `RGBA` inside a
+`Background` fails that `RGBA` decode, which the enclosing `(try? ...)` catches, so
+the whole `Background` becomes its default rather than failing the load. A malformed
+`RGBA` inside a `TimelineMarker.color` — which is `try c.decode` — fails the load.
+The same nested type produces opposite outcomes depending on its parent's strictness.
+
+## T007 — explicit `null` versus absent key
+
+**Indistinguishable everywhere in this format.** For a non-`Optional` field,
+`try? c.decode(T.self, forKey:)` on an explicit `null` throws and falls to the default,
+exactly as an absent key does. `decodeIfPresent` maps `null` to `nil` and then to the
+same default. For `Optional` fields the result is `None` either way.
+
+**Implication for the kernel**: treat `Value::Null` as an absent key at extraction
+time. No field anywhere needs to distinguish the two.
+
+
+
+---
+
+# Addendum: blast radius
+
+Found while implementing T018, when three tests written from the strictness table
+failed and the implementation turned out to be right.
+
+**Strictness is almost never observable as a load failure.** Nearly every type is
+reached through a lenient parent, so the practical difference between the three levels
+is *how much data a malformed value destroys*.
+
+| Malformed value | Original construct | What is lost |
+|---|---|---|
+| `Clip.speed` | `(try?) ?? 1.0` | that field only; siblings survive |
+| `Transform.width` | `decodeIfPresent`, reached via `(try? c.decode(Transform.self, ...)) ?? Transform()` | the **entire `Transform`** — `centerX` and every sibling revert to defaults |
+| one `Clip` in a track | `(try? c.decode([Clip].self, ...)) ?? []` | **every clip on that track**, including the valid ones |
+| one `Track` | `try c.decode` inside `Timeline` | the whole load fails |
+
+The third row is real data loss in the original format: a single clip missing
+`mediaRef` silently empties its track, and the load reports success. It is reproduced
+faithfully, because the alternative is diverging from the format.
+
+**Consequence for this project**: a successful decode is not evidence that the document
+was well-formed. `validate()` exists for that, and callers are expected to run it —
+which is also why the constitution says an MCP tool must never treat a success-shaped
+response as proof that something happened.

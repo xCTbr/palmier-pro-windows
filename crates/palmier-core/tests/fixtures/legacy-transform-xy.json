@@ -1,0 +1,9 @@
+{
+  "timelines": [{
+    "id": "tl-1", "fps": 30, "width": 1920, "height": 1080,
+    "tracks": [{ "type": "video", "clips": [{
+      "mediaRef": "a", "startFrame": 0, "durationFrames": 30,
+      "transform": { "x": 0.1, "y": 0.2, "width": 0.5, "height": 0.4 }
+    }] }]
+  }]
+}

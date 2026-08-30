@@ -1,0 +1,12 @@
+{
+  "id": "tl-legacy",
+  "name": "Legacy",
+  "fps": 24,
+  "width": 1280,
+  "height": 720,
+  "tracks": [
+    { "type": "video", "clips": [
+      { "mediaRef": "old-asset", "startFrame": 0, "durationFrames": 48 }
+    ] }
+  ]
+}

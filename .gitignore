@@ -13,3 +13,10 @@ dist/
 .env
 .env.local
 *.log
+
+# universal
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.idea/
