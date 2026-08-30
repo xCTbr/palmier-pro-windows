@@ -25,9 +25,13 @@ cargo fmt --check
 Rendering shells out to the `ffmpeg` binary at layer 0 — no `libav*` linkage, no
 `pkg-config`, no bindgen. Do not add FFmpeg FFI bindings before layer 1.
 
-**This repository is developed inside WSL2, so a local build targets Linux.**
-The Windows binary comes from CI on a Windows runner. Never claim Windows
-verification from a local build.
+**Linux and Windows are the supported platforms.** Development happens in WSL2, so a
+local build targets Linux; the Windows binary comes from CI on a Windows runner. Never
+claim Windows verification from a local build.
+
+macOS is built and tested in CI because it is free and catches portability bugs early,
+but it is **not a supported target** and no one on this project can run the app there.
+A macOS-only failure is worth fixing, never worth blocking on.
 
 ## Layers
 

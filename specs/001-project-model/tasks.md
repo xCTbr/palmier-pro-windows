@@ -157,7 +157,7 @@ correct timeline count, durations, and track composition.
 - [X] T057 [P] Add rustdoc to the public API of `palmier-core`, and to each strictness helper naming the Swift construct it reproduces
 - [X] T058 Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` and fix everything
 - [ ] T059 Push and confirm CI is green on Linux, Windows, and macOS. A local WSL2 run proves Linux only and must not be reported as more (SC-006)
-- [ ] T060 **Manual, cannot be automated here**: open a project written by this code in Palmier Pro on a real Mac and confirm it loads. Record the result in `specs/001-project-model/coverage.md`. Until this is done, US2 is verified only for self-consistency
+- [~] T060 **DEFERRED 2026-08-30 — no macOS access.** Opening a written project in Palmier Pro on a real Mac is the only way to verify interoperability, and no Mac is available to this project. Format compatibility therefore rests on the code audit in `research.md` and is **not** runtime-verified. Revisit only if a Mac becomes available; not a blocker for spec 002.
 
 ---
 

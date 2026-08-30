@@ -70,5 +70,8 @@ Every test here establishes **self-consistency**: what this crate writes, it rea
 back. Nothing in this repository can execute the Swift decoder, so interoperability
 with macOS is unverified.
 
-**T060 remains open** and is manual: write a project with this code, open it in
-Palmier Pro on a real Mac, record the result here.
+**T060 is deferred, not pending.** As of 2026-08-30 the project targets Linux and
+Windows only and has no macOS access, so interoperability cannot be verified at
+runtime by anyone on this project. Format compatibility is upheld by the code audit in
+`research.md` and by these self-consistency tests — that is the strongest claim
+available, and it should not be stated as more.

@@ -32,6 +32,11 @@ the user's project on the other platform.
 
 Extend with optional fields. Never repurpose, rename, or remove an existing one.
 
+**This invariant is audited, not verified.** The project targets Linux and Windows and
+has no macOS access, so no test here can prove a real Mac accepts what this writes.
+Uphold it from the decoder audit in `specs/001-project-model/research.md`, and never
+describe it as verified compatibility.
+
 ### IV. Time is integer frames
 
 Frame counts are `i64` end to end. Clip ranges are half-open — `[start, end)`,
