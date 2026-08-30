@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::codec::{
     DecodeError, Extra, FromObject, Object, PathStack, take_lenient, take_required,
 };
+use crate::codec::{ObjectWriter, ToObject};
 
 /// A single effect parameter. Every field is optional.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -70,4 +71,16 @@ pub struct HueCurves {
     pub hue_vs_lum: Vec<CurvePoint>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+impl ToObject for Effect {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_opt("id", &self.id)
+            .put("type", &self.effect_type)
+            .put("enabled", &self.enabled)
+            .put("params", &self.params)
+            .extras(&self.extra);
+        w.finish()
+    }
 }

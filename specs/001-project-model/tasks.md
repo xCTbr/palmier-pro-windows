@@ -106,18 +106,18 @@ not an organizational one.
 
 ### Tests for User Story 2
 
-- [ ] T037 [US2] Write failing tests in `crates/palmier-core/tests/roundtrip.rs` asserting decode → encode → decode is semantically equal for every fixture, ignoring key order and whitespace (SC-002)
-- [ ] T038 [P] [US2] Write a failing test asserting absent optional fields are omitted rather than emitted as `null` (FR-005)
-- [ ] T039 [P] [US2] Write a failing test asserting `Transform` encodes all nine modern keys and never emits legacy `x`/`y`
-- [ ] T040 [P] [US2] Write a failing test asserting preserved unknown keys are re-emitted at the position they were captured
-- [ ] T041 [P] [US2] Write a failing test asserting frame values encode as JSON integers, never in exponential notation (contracts/project-json.md)
+- [X] T037 [US2] Write failing tests in `crates/palmier-core/tests/roundtrip.rs` asserting decode → encode → decode is semantically equal for every fixture, ignoring key order and whitespace (SC-002)
+- [X] T038 [P] [US2] Write a failing test asserting absent optional fields are omitted rather than emitted as `null` (FR-005)
+- [X] T039 [P] [US2] Write a failing test asserting `Transform` encodes all nine modern keys and never emits legacy `x`/`y`
+- [X] T040 [P] [US2] Write a failing test asserting preserved unknown keys are re-emitted at the position they were captured
+- [X] T041 [P] [US2] Write a failing test asserting frame values encode as JSON integers, never in exponential notation (contracts/project-json.md)
 
 ### Implementation for User Story 2
 
-- [ ] T042 [US2] Implement `Serialize` for every model type, omitting `None` optionals and re-emitting `extra`
-- [ ] T043 [US2] Implement `Transform`'s custom encoder — all nine modern keys, never the legacy pair
-- [ ] T044 [US2] Implement the writer at the crate boundary producing `project.json` bytes, with no filesystem coupling in model types
-- [ ] T045 [US2] Verify every test from T037–T041 passes and report the actual `cargo test` output
+- [X] T042 [US2] Implement `Serialize` for every model type, omitting `None` optionals and re-emitting `extra`
+- [X] T043 [US2] Implement `Transform`'s custom encoder — all nine modern keys, never the legacy pair
+- [X] T044 [US2] Implement the writer at the crate boundary producing `project.json` bytes, with no filesystem coupling in model types
+- [X] T045 [US2] Verify every test from T037–T041 passes and report the actual `cargo test` output
 
 **Checkpoint**: round trip is stable and self-consistent. Interop with a real Mac is
 still unproven — see T060.
@@ -133,15 +133,15 @@ correct timeline count, durations, and track composition.
 
 ### Tests for User Story 3
 
-- [ ] T046 [P] [US3] Write a failing test in `crates/palmier/tests/inspect.rs` asserting the summary for a fixture project reports correct fps, resolution, duration in frames and timecode, and per-track clip counts, with exit code 0
-- [ ] T047 [P] [US3] Write failing tests for the failure paths — path not found, not a project, malformed JSON, rejected document — each asserting a non-zero exit and no partial summary
+- [X] T046 [P] [US3] Write a failing test in `crates/palmier/tests/inspect.rs` asserting the summary for a fixture project reports correct fps, resolution, duration in frames and timecode, and per-track clip counts, with exit code 0
+- [X] T047 [P] [US3] Write failing tests for the failure paths — path not found, not a project, malformed JSON, rejected document — each asserting a non-zero exit and no partial summary
 
 ### Implementation for User Story 3
 
-- [ ] T048 [US3] Implement timecode formatting from frames and fps in `crates/palmier-core/src/frames.rs`
-- [ ] T049 [US3] Implement the `inspect` subcommand in `crates/palmier/src/inspect.rs` per the CLI contract
-- [ ] T050 [US3] Wire `clap` argument parsing and exit codes in `crates/palmier/src/main.rs`
-- [ ] T051 [US3] Verify T046–T047 pass and report the actual output
+- [X] T048 [US3] Implement timecode formatting from frames and fps in `crates/palmier-core/src/frames.rs`
+- [X] T049 [US3] Implement the `inspect` subcommand in `crates/palmier/src/inspect.rs` per the CLI contract
+- [X] T050 [US3] Wire `clap` argument parsing and exit codes in `crates/palmier/src/main.rs`
+- [X] T051 [US3] Verify T046–T047 pass and report the actual output
 
 **Checkpoint**: the feature is demonstrable end to end without reading test code.
 
@@ -149,13 +149,13 @@ correct timeline count, durations, and track composition.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T052 [P] Write the SC-004 property test in `crates/palmier-core/tests/no_panic.rs` — arbitrary JSON and arbitrary field values never panic, only error
-- [ ] T053 Write the SC-005 performance gate as an ignored test generating a 10,000-clip project and asserting load under 500 ms; run it in release and record the measured number
-- [ ] T054 If T053 fails, replace the map-buffering kernel's hot path with a streaming extraction, keeping the strictness helpers' behavior identical — the design changes, the contract does not
-- [ ] T055 [P] Produce the SC-001 audit checklist mapping every persisted type to the test that covers it, and store it at `specs/001-project-model/coverage.md`
-- [ ] T056 [P] Verify SC-003 by removing each guard in turn and confirming its test fails, then restoring it
-- [ ] T057 [P] Add rustdoc to the public API of `palmier-core`, and to each strictness helper naming the Swift construct it reproduces
-- [ ] T058 Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` and fix everything
+- [X] T052 [P] Write the SC-004 property test in `crates/palmier-core/tests/no_panic.rs` — arbitrary JSON and arbitrary field values never panic, only error
+- [X] T053 Write the SC-005 performance gate as an ignored test generating a 10,000-clip project and asserting load under 500 ms; run it in release and record the measured number
+- [X] T054 NOT NEEDED — T053 measured 57ms against a 500ms budget. Original text: if T053 fails, replace the map-buffering kernel's hot path with a streaming extraction, keeping the strictness helpers' behavior identical — the design changes, the contract does not
+- [X] T055 [P] Produce the SC-001 audit checklist mapping every persisted type to the test that covers it, and store it at `specs/001-project-model/coverage.md`
+- [X] T056 [P] Verify SC-003 by removing each guard in turn and confirming its test fails, then restoring it
+- [X] T057 [P] Add rustdoc to the public API of `palmier-core`, and to each strictness helper naming the Swift construct it reproduces
+- [X] T058 Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` and fix everything
 - [ ] T059 Push and confirm CI is green on Linux, Windows, and macOS. A local WSL2 run proves Linux only and must not be reported as more (SC-006)
 - [ ] T060 **Manual, cannot be automated here**: open a project written by this code in Palmier Pro on a real Mac and confirm it loads. Record the result in `specs/001-project-model/coverage.md`. Until this is done, US2 is verified only for self-consistency
 

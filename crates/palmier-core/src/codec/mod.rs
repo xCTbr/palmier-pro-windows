@@ -8,10 +8,12 @@
 pub mod error;
 pub mod ranges;
 pub mod strictness;
+pub mod writer;
 
 pub use error::{DecodeError, ErrorKind, PathStack};
 pub use ranges::{clamp_range, coerce_unit_interval};
 pub use strictness::{take_lenient, take_lenient_opt, take_or_default, take_required};
+pub use writer::{ObjectWriter, ToObject};
 
 use serde_json::Value;
 

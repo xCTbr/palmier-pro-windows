@@ -3,6 +3,7 @@
 use crate::codec::{
     DecodeError, Extra, FromObject, Object, PathStack, take_lenient, take_or_default, take_required,
 };
+use crate::codec::{ObjectWriter, ToObject};
 use crate::frames::{FrameError, FrameRange};
 use crate::text::Rgba;
 use serde::{Deserialize, Serialize};
@@ -70,5 +71,30 @@ impl FromObject for SpeakerRegistryEntry {
             name: take_lenient(&mut o, "name", None),
             extra: o,
         })
+    }
+}
+
+impl ToObject for TimelineMarker {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("id", &self.id)
+            .put("name", &self.name)
+            .put("startFrame", &self.start_frame)
+            .put("durationFrames", &self.duration_frames)
+            .put("color", &self.color)
+            .put("comment", &self.comment)
+            .put("status", &self.status)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for SpeakerRegistryEntry {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_opt("id", &self.id)
+            .put_opt("name", &self.name)
+            .extras(&self.extra);
+        w.finish()
     }
 }

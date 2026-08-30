@@ -8,6 +8,7 @@ use crate::codec::{
     DecodeError, Extra, FromObject, Object, PathStack, object_from_value, take_lenient_opt,
     take_object_array, take_object_array_opt,
 };
+use crate::codec::{ObjectWriter, ToObject};
 use crate::marker::SpeakerRegistryEntry;
 use crate::media::MulticamSource;
 use crate::timeline::{Timeline, TimelineViewState};
@@ -90,5 +91,38 @@ impl ProjectFile {
 
     pub fn timeline(&self, id: &str) -> Option<&Timeline> {
         self.timelines.iter().find(|t| t.id.as_deref() == Some(id))
+    }
+}
+
+impl ToObject for ProjectFile {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_object_array("timelines", &self.timelines)
+            .put_opt("activeTimelineId", &self.active_timeline_id)
+            .put_opt("openTimelineIds", &self.open_timeline_ids);
+        if let Some(states) = &self.view_states {
+            let mut map = Object::new();
+            for (id, state) in states {
+                map.insert(id.clone(), Value::Object(state.to_object()));
+            }
+            w.put("viewStates", &Value::Object(map));
+        }
+        w.put_object_array_opt("speakers", &self.speakers)
+            .put_object_array_opt("multicamGroups", &self.multicam_groups)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ProjectFile {
+    /// Encode to `project.json` bytes.
+    ///
+    /// Absent ids are omitted rather than invented: the original tolerates a missing
+    /// id and generates one on load, so a document that had none round-trips exactly.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = serde_json::to_vec_pretty(&Value::Object(self.to_object()))
+            .expect("a JSON object built from owned values cannot fail to serialize");
+        bytes.push(b'\n');
+        bytes
     }
 }

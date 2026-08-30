@@ -6,6 +6,7 @@ use crate::codec::{
     DecodeError, Extra, FromObject, Object, PathStack, take_lenient, take_lenient_opt,
     take_object_lenient,
 };
+use crate::codec::{ObjectWriter, ToObject};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -298,4 +299,70 @@ pub struct WordTiming {
     pub end_frame: i64,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+impl ToObject for Outline {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("enabled", &self.enabled)
+            .put("color", &self.color)
+            .put("width", &self.width)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for Background {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("enabled", &self.enabled)
+            .put("color", &self.color)
+            .put("paddingX", &self.padding_x)
+            .put("paddingY", &self.padding_y)
+            .put("cornerRadius", &self.corner_radius)
+            .put("offsetX", &self.offset_x)
+            .put("offsetY", &self.offset_y)
+            .put("outlineColor", &self.outline_color)
+            .put("outlineWidth", &self.outline_width)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for TextStyle {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("fontName", &self.font_name)
+            .put("fontSize", &self.font_size)
+            .put("fontScale", &self.font_scale)
+            .put("widthScale", &self.width_scale)
+            .put("heightScale", &self.height_scale)
+            .put("tracking", &self.tracking)
+            .put("lineSpacing", &self.line_spacing)
+            .put("fontCase", &self.font_case)
+            .put("isBold", &self.is_bold)
+            .put("isItalic", &self.is_italic)
+            .put("isUnderlined", &self.is_underlined)
+            .put("isStruckThrough", &self.is_struck_through)
+            .put("isOverlined", &self.is_overlined)
+            .put("color", &self.color)
+            .put("alignment", &self.alignment)
+            .put("blur", &self.blur)
+            .put("shadow", &self.shadow)
+            .put_object("background", &self.background)
+            .put_object("border", &self.border)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for TextAnimation {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("preset", &self.preset)
+            .put("perWordFrames", &self.per_word_frames)
+            .put_opt("highlight", &self.highlight)
+            .extras(&self.extra);
+        w.finish()
+    }
 }

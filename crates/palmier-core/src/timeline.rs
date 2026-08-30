@@ -7,6 +7,7 @@ use crate::codec::{
     take_lenient, take_lenient_opt, take_object_array, take_object_array_lenient,
     take_object_array_opt, take_object_lenient, take_object_opt, take_required,
 };
+use crate::codec::{ObjectWriter, ToObject};
 use crate::effect::Effect;
 use crate::frames::{FrameError, FrameRange};
 use crate::keyframe::{AnimPair, Interpolation, KeyframeTrack};
@@ -293,5 +294,92 @@ impl Timeline {
         self.tracks
             .iter()
             .any(|t| t.track_type == ClipType::Audio && !t.clips.is_empty())
+    }
+}
+
+impl ToObject for Clip {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_opt("id", &self.id)
+            .put("mediaRef", &self.media_ref)
+            .put("mediaType", &self.media_type)
+            .put("sourceClipType", &self.source_clip_type)
+            .put("startFrame", &self.start_frame)
+            .put("durationFrames", &self.duration_frames)
+            .put("trimStartFrame", &self.trim_start_frame)
+            .put("trimEndFrame", &self.trim_end_frame)
+            .put("speed", &self.speed)
+            .put("volume", &self.volume)
+            .put("fadeInFrames", &self.fade_in_frames)
+            .put("fadeOutFrames", &self.fade_out_frames)
+            .put("fadeInInterpolation", &self.fade_in_interpolation)
+            .put("fadeOutInterpolation", &self.fade_out_interpolation)
+            .put("opacity", &self.opacity)
+            .put_object("transform", &self.transform)
+            .put("crop", &self.crop)
+            .put("edgeRounding", &self.edge_rounding)
+            .put("edgeSoftness", &self.edge_softness)
+            .put_opt("linkGroupId", &self.link_group_id)
+            .put_opt("captionGroupId", &self.caption_group_id)
+            .put_opt("multicamGroupId", &self.multicam_group_id)
+            .put_opt("textContent", &self.text_content)
+            .put_object_opt("textStyle", &self.text_style)
+            .put_object_opt("textAnimation", &self.text_animation)
+            .put_opt("wordTimings", &self.word_timings)
+            .put_opt("textFillMode", &self.text_fill_mode)
+            .put_opt("opacityTrack", &self.opacity_track)
+            .put_opt("positionTrack", &self.position_track)
+            .put_opt("scaleTrack", &self.scale_track)
+            .put_opt("rotationTrack", &self.rotation_track)
+            .put_opt("cropTrack", &self.crop_track)
+            .put_opt("volumeTrack", &self.volume_track)
+            .put_object_array_opt("effects", &self.effects)
+            .put_opt("blendMode", &self.blend_mode)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for Track {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_opt("id", &self.id)
+            .put("type", &self.track_type)
+            .put_opt("name", &self.name)
+            .put("muted", &self.muted)
+            .put("hidden", &self.hidden)
+            .put("syncLocked", &self.sync_locked)
+            .put_object_array("clips", &self.clips)
+            .put("displayHeight", &self.display_height)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for TimelineViewState {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("playheadFrame", &self.playhead_frame)
+            .put("zoomScale", &self.zoom_scale)
+            .put("scrollOffsetX", &self.scroll_offset_x)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for Timeline {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put_opt("id", &self.id)
+            .put("name", &self.name)
+            .put("fps", &self.fps)
+            .put("width", &self.width)
+            .put("height", &self.height)
+            .put("settingsConfigured", &self.settings_configured)
+            .put_opt("folderId", &self.folder_id)
+            .put_object_array("tracks", &self.tracks)
+            .put_object_array("markers", &self.markers)
+            .extras(&self.extra);
+        w.finish()
     }
 }

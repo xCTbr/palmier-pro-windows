@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::codec::{DecodeError, Extra, FromObject, Object, PathStack, take_or_default};
+use crate::codec::{ObjectWriter, ToObject};
 
 /// Strict on wrong types: the original uses `decodeIfPresent`, not `try?`.
 #[derive(Debug, Clone, PartialEq)]
@@ -97,5 +98,29 @@ impl Default for Crop {
 impl Crop {
     pub fn is_identity(&self) -> bool {
         self.left == 0.0 && self.top == 0.0 && self.right == 0.0 && self.bottom == 0.0
+    }
+}
+
+impl ToObject for Transform {
+    /// All nine modern keys, never the legacy `x`/`y` — the original's only custom
+    /// encoder behaves exactly this way.
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("centerX", &self.center_x)
+            .put("centerY", &self.center_y)
+            .put("width", &self.width)
+            .put("height", &self.height)
+            .put("rotation", &self.rotation)
+            .put("rotationX", &self.rotation_x)
+            .put("rotationY", &self.rotation_y)
+            .put("flipHorizontal", &self.flip_horizontal)
+            .put("flipVertical", &self.flip_vertical)
+            .extras(&self.extra);
+        let mut object = w.finish();
+        // Migration is one-way: a re-encoded document never carries the legacy pair,
+        // even if the source document did.
+        object.remove("x");
+        object.remove("y");
+        object
     }
 }

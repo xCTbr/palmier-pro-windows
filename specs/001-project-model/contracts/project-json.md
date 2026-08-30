@@ -23,7 +23,10 @@ that follow.
 
 1. Emit every key the Swift decoder requires, in the type it expects.
 2. Omit absent optional fields rather than writing `null`.
-3. Re-emit preserved unknown keys at the position they were captured.
+3. Re-emit preserved unknown keys. They land after the keys this project models
+   rather than at their original offset, which is sound because key order within a
+   JSON object carries no meaning — but it does mean a byte-identical round trip is
+   not promised, only a semantically identical one.
 4. Never emit `Transform`'s legacy `x`/`y`.
 5. Emit frame values as JSON integers and never in exponential notation.
 

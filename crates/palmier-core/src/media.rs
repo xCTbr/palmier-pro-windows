@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::codec::{DecodeError, Extra, FromObject, Object, PathStack, take_or_default};
+use crate::codec::{ObjectWriter, ToObject};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,5 +96,23 @@ pub struct MulticamSource {
 impl FromObject for MulticamSource {
     fn from_object(o: Object, _p: &mut PathStack) -> Result<Self, DecodeError> {
         Ok(Self { raw: o })
+    }
+}
+
+impl ToObject for MediaManifest {
+    fn to_object(&self) -> Object {
+        let mut w = ObjectWriter::new();
+        w.put("version", &self.version)
+            .put("entries", &self.entries)
+            .put("folders", &self.folders)
+            .extras(&self.extra);
+        w.finish()
+    }
+}
+
+impl ToObject for MulticamSource {
+    /// Opaque until layer 3: re-emitted exactly as captured.
+    fn to_object(&self) -> Object {
+        self.raw.clone()
     }
 }
