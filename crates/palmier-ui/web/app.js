@@ -59,6 +59,10 @@ async function refreshStatus() {
     ? (s.project.unsaved ? "Unsaved changes." : "Saved.")
     : "Open or create one under Project.";
 
+  // The panel exists only where Claude Code does; without it, the terminal or the
+  // Claude app is the way in.
+  $("chat").classList.toggle("is-off", !s.chat?.available);
+
   $("health").innerHTML =
     `<span class="pill"><span class="dot ok"></span>server on ${new URL(s.mcpUrl).port}</span>` +
     (s.jobsRunning ? `<span class="pill"><span class="dot warn"></span>${s.jobsRunning} running</span>` : "");
@@ -306,6 +310,121 @@ function drawTimeline(tl, names = new Map()) {
   }
   drawPlayhead();
 }
+
+// ------------------------------------------------------------------ chat
+let chatSession = null;
+let chatBusy = false;
+
+function bubble(kind, text) {
+  $("chat-empty")?.remove();
+  const el = document.createElement("div");
+  el.className = `msg ${kind}`;
+  el.textContent = text;
+  $("chat-log").append(el);
+  $("chat-log").scrollTop = $("chat-log").scrollHeight;
+  return el;
+}
+
+/// Send a message and stream the reply.
+///
+/// The panel is a view onto Claude Code, not a second agent: the CLI runs with this
+/// server's own MCP endpoint, so it edits the very project on screen.
+async function askClaude(prompt) {
+  if (chatBusy) return;
+  chatBusy = true;
+  $("chat-send").disabled = true;
+  bubble("you", prompt);
+  const status = bubble("thinking", "thinking…");
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt, sessionId: chatSession }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let touched = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+
+      for (const frame of frames) {
+        const line = frame.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        let event;
+        try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (event.kind === "start") {
+          chatSession = event.sessionId ?? chatSession;
+          $("chat-meta").textContent = event.model ?? "";
+        } else if (event.kind === "say") {
+          if (event.text?.trim()) bubble("claude", event.text.trim());
+          if (event.tools?.length) {
+            touched = true;
+            const list = document.createElement("ul");
+            list.className = "tools";
+            for (const tool of event.tools) {
+              const li = document.createElement("li");
+              li.textContent = String(tool.name).replace(/^mcp__palmier__/, "");
+              list.append(li);
+            }
+            $("chat-log").append(list);
+          }
+        } else if (event.kind === "done") {
+          status.remove();
+          if (event.isError && event.text) bubble("fail", event.text);
+          const cost = event.costUsd ? ` · $${event.costUsd.toFixed(4)}` : "";
+          const turns = event.turns ? `${event.turns} turns` : "";
+          if (turns || cost) bubble("turn", `${turns}${cost}`);
+        } else if (event.kind === "error") {
+          bubble("fail", event.text);
+        }
+      }
+    }
+    status.remove();
+
+    // Whatever it touched, show it: that is the point of the panel being here.
+    if (touched) {
+      await refreshProject();
+      if (currentTimeline) showFrame(playhead);
+    }
+    refreshStatus().catch(() => {});
+  } catch (e) {
+    status.remove();
+    bubble("fail", e.message);
+  } finally {
+    chatBusy = false;
+    $("chat-send").disabled = false;
+  }
+}
+
+$("chatform").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const field = $("chat-input");
+  const prompt = field.value.trim();
+  if (!prompt) return;
+  field.value = "";
+  askClaude(prompt);
+});
+
+// Enter sends, shift+enter makes a new line.
+$("chat-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    $("chatform").requestSubmit();
+  }
+});
 
 // ------------------------------------------------------------------ boot
 async function boot() {

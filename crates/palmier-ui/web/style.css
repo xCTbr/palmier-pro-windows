@@ -228,3 +228,44 @@ input::placeholder { color: var(--ink-3); }
   border-top: 5px solid var(--amber);
 }
 @media (prefers-reduced-motion: reduce) { .pv-busy { transition: none; } }
+
+/* ------------------------------------------------------------------ chat */
+.editor { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .editor { grid-template-columns: 1fr; } }
+
+.chat {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r);
+  display: flex; flex-direction: column; height: calc(100vh - 96px); min-height: 420px;
+  position: sticky; top: 72px;
+}
+.chathead {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 14px 16px 10px; border-bottom: 1px solid var(--rule);
+}
+.chathead h2 {
+  margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.log { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex;
+  flex-direction: column; gap: 12px; }
+.msg { font-size: 13px; line-height: 1.5; }
+.msg.you { color: var(--ink); background: var(--raised); border-radius: 6px;
+  padding: 8px 11px; align-self: flex-end; max-width: 92%; }
+.msg.claude { color: var(--ink-2); white-space: pre-wrap; }
+.msg.fail { color: var(--bad); }
+.tools { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 0; }
+.tools li {
+  list-style: none; font-family: ui-monospace, monospace; font-size: 11px;
+  color: var(--amber); background: var(--amber-soft); border-radius: 4px;
+  padding: 3px 7px; align-self: flex-start;
+}
+.turn { font-size: 11px; color: var(--ink-3); font-family: ui-monospace, monospace; }
+.chatform { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--rule); }
+.chatform textarea {
+  flex: 1; resize: none; background: var(--bg); border: 1px solid var(--rule-2);
+  border-radius: 6px; padding: 8px 10px; color: var(--ink); font: inherit; font-size: 13px;
+}
+.chatform textarea:focus { outline: 2px solid var(--amber); outline-offset: -1px;
+  border-color: transparent; }
+.chat.is-off { display: none; }
+.thinking { color: var(--ink-3); font-size: 12px; font-style: italic; }

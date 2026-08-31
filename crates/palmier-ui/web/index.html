@@ -101,6 +101,7 @@
 
   <!-- --------------------------------------------------------- timeline -->
   <section class="view" id="view-timeline">
+    <div class="editor">
     <div class="stack">
       <article class="card preview-card">
         <div class="cardhead">
@@ -129,6 +130,22 @@
         </div>
         <div class="tl" id="tl"><p class="empty">No project open.</p></div>
       </article>
+    </div>
+
+    <aside class="chat" id="chat">
+      <div class="chathead">
+        <h2>Chat</h2>
+        <span class="meta" id="chat-meta"></span>
+      </div>
+      <div class="log" id="chat-log">
+        <p class="empty" id="chat-empty">Ask for an edit and watch the timeline change.</p>
+      </div>
+      <form class="chatform" id="chatform">
+        <textarea id="chat-input" rows="2" placeholder="Trim the first three seconds…"
+                  spellcheck="false"></textarea>
+        <button class="btn primary" type="submit" id="chat-send">Send</button>
+      </form>
+    </aside>
     </div>
   </section>
 </main>

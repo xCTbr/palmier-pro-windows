@@ -1637,6 +1637,7 @@ name = "palmier-ui"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "futures-core",
  "palmier-core",
  "palmier-gen",
  "palmier-mcp",
@@ -1644,6 +1645,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

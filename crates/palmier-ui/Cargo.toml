@@ -11,10 +11,12 @@ workspace = true
 
 [dependencies]
 axum = "0.8.9"
+futures-core = "0.3.34"
 palmier-core = { version = "0.0.1", path = "../palmier-core" }
 palmier-gen = { version = "0.0.1", path = "../palmier-gen" }
 palmier-mcp = { version = "0.0.1", path = "../palmier-mcp" }
 palmier-media = { version = "0.0.1", path = "../palmier-media" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-tokio = { version = "1.53.1", features = ["sync"] }
+tokio = { version = "1.53.1", features = ["io-util", "process", "rt", "sync"] }
+tokio-stream = "0.1.19"

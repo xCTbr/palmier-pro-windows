@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+pub mod chat;
+
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -54,6 +56,7 @@ pub fn router(state: Ui) -> Router {
         .route("/api/project/save", post(save))
         .route("/api/frame/{frame}", get(frame))
         .route("/api/jobs", get(list_jobs))
+        .route("/api/chat", post(chat::ask))
         .with_state(state)
 }
 
@@ -80,6 +83,7 @@ async fn status(State(ui): State<Ui>) -> Json<Value> {
             "unsaved": session.is_dirty(),
         },
         "jobsRunning": ui.jobs.running_count().await,
+        "chat": { "available": chat::cli_available() },
     }))
 }
 
@@ -230,7 +234,7 @@ async fn list_jobs(State(ui): State<Ui>) -> Json<Value> {
 }
 
 /// One error shape for the whole API, so the UI has one thing to render.
-fn problem(message: impl Into<String>) -> Response {
+pub(crate) fn problem(message: impl Into<String>) -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(json!({ "error": message.into() })),
