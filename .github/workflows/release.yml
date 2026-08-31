@@ -58,15 +58,18 @@ jobs:
 
       # The desktop shell is outside the workspace: it needs a system webview, which the
       # Linux development machine has no reason to install, so it is built here alone.
-      - name: Build the installers
-        working-directory: crates/palmier-app
-        run: cargo build --release
+      # `tauri build` compiles and bundles in one pass.
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Bundle
+      - name: Build and bundle
         working-directory: crates/palmier-app
-        run: |
-          cargo install tauri-cli --version "^2" --locked
-          cargo tauri build --no-bundle=false
+        run: cargo tauri build
+
+      - name: Show what was produced
+        working-directory: crates/palmier-app
+        shell: bash
+        run: ls -la target/release/bundle/*/ || true
 
       - uses: actions/upload-artifact@v4
         with:
