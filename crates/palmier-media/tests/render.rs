@@ -340,3 +340,24 @@ fn an_unsupported_codec_is_refused_before_ffmpeg_runs() {
     let error = render(&timeline_from(TWO_CLIPS), &resolver(vec![]), &options).unwrap_err();
     assert!(error.to_string().contains("prores"), "{error}");
 }
+
+#[test]
+fn a_frame_past_the_end_is_black_not_an_error() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let dir = workdir("pastend");
+    let a = make_source(&dir, "a.mp4", "testsrc", 2, false);
+    let json = r#"{"timelines":[{"id":"t","fps":30,"width":640,"height":360,
+      "tracks":[{"id":"v","type":"video","clips":[
+        {"id":"c","mediaRef":"A","startFrame":0,"durationFrames":30}]}]}]}"#;
+    let png = palmier_media::frame_png(
+        &timeline_from(json),
+        &resolver(vec![("A", a)]),
+        5000,
+        palmier_media::FrameOptions::default(),
+    )
+    .expect("a frame past the end must render black, not fail");
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+}

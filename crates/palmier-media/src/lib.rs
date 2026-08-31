@@ -7,9 +7,9 @@ pub mod graph;
 pub mod probe;
 pub mod render;
 
-pub use graph::{FilterGraph, ResolvedMedia};
+pub use graph::{FilterGraph, ResolvedMedia, build_with};
 pub use probe::{MediaInfo, probe};
-pub use render::{RenderOptions, render};
+pub use render::{FrameOptions, RenderOptions, frame_png, render, render_frame};
 
 use std::process::Command;
 

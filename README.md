@@ -14,7 +14,7 @@ Windows, Linux, and macOS. Free, and open source under GPLv3.
 
 | | | |
 |---|---|---|
-| **L0** | MCP daemon — project model, edit commands, 14 tools, render via FFmpeg | **done** |
+| **L0** | MCP daemon — project model, edit commands, 15 tools, render via FFmpeg | **done** |
 | **L1** | Own compositor on wgpu; color, effects, keyframes | not started |
 | **L2** | The app — timeline, preview, inspector, export | not started |
 | **L3** | Multicam, local transcription, visual search, BYOK generation | not started |
@@ -22,6 +22,13 @@ Windows, Linux, and macOS. Free, and open source under GPLv3.
 Linux and Windows are supported. macOS builds and tests in CI but is not a target.
 
 ## Use it
+
+**Download a build.** Every push to `main` publishes binaries for Windows and Linux —
+grab one from the [Actions tab](https://github.com/xCTbr/palmier-pro-windows/actions/workflows/release.yml),
+open the most recent run, and download the artifact for your platform. You still need
+`ffmpeg` and `ffprobe` on `PATH`.
+
+Or build it yourself:
 
 ```bash
 cargo build --release

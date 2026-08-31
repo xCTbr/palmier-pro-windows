@@ -290,6 +290,25 @@ impl Timeline {
         Ok(max)
     }
 
+    /// Clips on screen at `frame`, topmost first.
+    ///
+    /// Track order is bottom-up in storage, so the last track composites on top. Hidden
+    /// tracks and non-visual clips are excluded, matching what a render produces.
+    pub fn visible_clips_at(&self, frame: i64) -> Vec<&Clip> {
+        let mut out: Vec<&Clip> = Vec::new();
+        for track in self.tracks.iter().rev() {
+            if track.hidden || track.track_type == ClipType::Audio {
+                continue;
+            }
+            for clip in &track.clips {
+                if clip.range().map(|r| r.contains(frame)).unwrap_or(false) {
+                    out.push(clip);
+                }
+            }
+        }
+        out
+    }
+
     pub fn has_audio_clips(&self) -> bool {
         self.tracks
             .iter()

@@ -69,6 +69,18 @@ pub fn build(
     timeline: &Timeline,
     resolve: &dyn Fn(&str) -> Option<ResolvedMedia>,
 ) -> (FilterGraph, Vec<String>) {
+    build_with(timeline, resolve, true)
+}
+
+/// As [`build`], but able to leave audio out.
+///
+/// A single-frame render maps only the video output, and ffmpeg rejects a graph whose
+/// audio chain ends unconnected — so a frame render must not build one.
+pub fn build_with(
+    timeline: &Timeline,
+    resolve: &dyn Fn(&str) -> Option<ResolvedMedia>,
+    include_audio: bool,
+) -> (FilterGraph, Vec<String>) {
     let fps = timeline.fps.max(1);
     let total_frames = timeline.total_frames().unwrap_or(0);
     let duration = seconds(total_frames, fps);
@@ -106,8 +118,9 @@ pub fn build(
                     ClipType::Video | ClipType::Image | ClipType::Sequence | ClipType::Lottie
                 );
             // A video file without an audio stream contributes no audio chain.
-            let audible =
-                media.has_audio && matches!(clip.media_type, ClipType::Video | ClipType::Audio);
+            let audible = include_audio
+                && media.has_audio
+                && matches!(clip.media_type, ClipType::Video | ClipType::Audio);
 
             // Source span consumed, scaled by speed; timeline span it occupies.
             let source_len = (clip.duration_frames as f64 * clip.speed).round() as i64;

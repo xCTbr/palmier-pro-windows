@@ -782,3 +782,226 @@ async fn an_unsupported_codec_or_crf_is_refused() {
         .await;
     assert_eq!(bad_crf["status"], "refused");
 }
+
+// ------------------------------------------------------ inspect_timeline
+
+impl Client {
+    /// Raw content blocks, for tools that return more than one.
+    async fn call_blocks(&self, name: &str, arguments: Value) -> Vec<Value> {
+        let (_, body) = self
+            .post(json!({
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }))
+            .await;
+        Self::envelope(&body)["result"]["content"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+/// A timeline with two visually distinct clips back to back.
+async fn two_shot_client(tag: &str) -> (Client, String, String) {
+    let client = Client::start(EMPTY, tag).await;
+    client.open().await;
+    let a = make_source(&client.dir, "a.mp4", "testsrc");
+    let b = make_source(&client.dir, "b.mp4", "smptebars");
+    let imported = client
+        .call("import_media", json!({ "paths": [a, b] }))
+        .await;
+    let (ra, rb) = (
+        imported["media"][0]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        imported["media"][1]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
+    client
+        .call(
+            "add_clips",
+            json!({ "entries": [
+                { "mediaRef": ra, "trackId": "v1", "startFrame": 0, "endFrame": 30 },
+                { "mediaRef": rb, "trackId": "v1", "startFrame": 30, "endFrame": 60 }
+            ]}),
+        )
+        .await;
+    (client, ra, rb)
+}
+
+fn decode_png(block: &Value) -> Vec<u8> {
+    assert_eq!(block["type"], "image");
+    assert_eq!(block["mimeType"], "image/png");
+    let data = block["data"].as_str().expect("base64 payload");
+    let bytes = base64_decode(data);
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "not a PNG");
+    bytes
+}
+
+fn png_size(bytes: &[u8]) -> (u32, u32) {
+    let w = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
+    let h = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+    (w, h)
+}
+
+fn base64_decode(text: &str) -> Vec<u8> {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut lookup = [255u8; 256];
+    for (i, c) in ALPHABET.iter().enumerate() {
+        lookup[*c as usize] = i as u8;
+    }
+    let mut out = Vec::new();
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for byte in text.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = lookup[byte as usize];
+        if value == 255 {
+            continue;
+        }
+        acc = (acc << 6) | value as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn inspecting_returns_a_real_image_paired_with_its_metadata() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let (client, first_ref, _) = two_shot_client("inspect").await;
+    let clips = client.timeline().await["tracks"][0]["clips"].clone();
+    let first_id = clips[0]["id"].as_str().unwrap().to_string();
+    let _ = first_ref;
+
+    let blocks = client
+        .call_blocks("inspect_timeline", json!({ "startFrame": 5 }))
+        .await;
+    assert_eq!(blocks.len(), 2, "one text block and one image");
+
+    let meta: Value = serde_json::from_str(blocks[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(meta["frame"], 5);
+    assert_eq!(meta["canvas"]["width"], 640);
+    assert_eq!(
+        meta["visibleClipIds"],
+        json!([first_id]),
+        "the metadata maps the picture back to the clip that made it"
+    );
+
+    let png = decode_png(&blocks[1]);
+    let (w, h) = png_size(&png);
+    assert_eq!(w, 640, "downscaled to the readable width");
+    assert!(h > 0);
+}
+
+#[tokio::test]
+async fn sampling_a_range_returns_one_pair_per_frame_and_the_picture_changes() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let (client, _, _) = two_shot_client("inspectrange").await;
+    let blocks = client
+        .call_blocks(
+            "inspect_timeline",
+            json!({ "startFrame": 0, "endFrame": 60, "maxFrames": 3 }),
+        )
+        .await;
+    assert_eq!(
+        blocks.len(),
+        6,
+        "three frames, each a text block plus an image"
+    );
+
+    let frames: Vec<i64> = blocks
+        .iter()
+        .step_by(2)
+        .map(|b| {
+            serde_json::from_str::<Value>(b["text"].as_str().unwrap()).unwrap()["frame"]
+                .as_i64()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(frames, vec![0, 20, 40], "samples spread across the range");
+
+    // The last sample is in the second clip, so it must not look like the first.
+    let first = decode_png(&blocks[1]);
+    let last = decode_png(&blocks[5]);
+    assert_ne!(
+        first, last,
+        "the two shots render identically — the cut is invisible"
+    );
+}
+
+#[tokio::test]
+async fn the_visible_clip_list_follows_the_cut() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let (client, _, _) = two_shot_client("inspectvisible").await;
+    let clips = client.timeline().await["tracks"][0]["clips"].clone();
+    let (a, b) = (
+        clips[0]["id"].as_str().unwrap().to_string(),
+        clips[1]["id"].as_str().unwrap().to_string(),
+    );
+
+    let before = client
+        .call_blocks("inspect_timeline", json!({ "startFrame": 10 }))
+        .await;
+    let after = client
+        .call_blocks("inspect_timeline", json!({ "startFrame": 40 }))
+        .await;
+    let meta = |blocks: &[Value]| -> Value {
+        serde_json::from_str(blocks[0]["text"].as_str().unwrap()).unwrap()
+    };
+    assert_eq!(meta(&before)["visibleClipIds"], json!([a]));
+    assert_eq!(meta(&after)["visibleClipIds"], json!([b]));
+}
+
+#[tokio::test]
+async fn a_frame_past_the_end_renders_black_rather_than_failing() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let (client, _, _) = two_shot_client("inspectpast").await;
+    let blocks = client
+        .call_blocks("inspect_timeline", json!({ "startFrame": 5000 }))
+        .await;
+    let meta: Value = serde_json::from_str(blocks[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        meta["visibleClipIds"],
+        json!([]),
+        "nothing is on screen there"
+    );
+    assert!(!decode_png(&blocks[1]).is_empty());
+}
+
+#[tokio::test]
+async fn inspecting_refuses_a_bad_range_or_a_closed_project() {
+    let closed = Client::start(EMPTY, "inspectclosed").await;
+    let out = closed.call("inspect_timeline", json!({})).await;
+    assert_eq!(out["status"], "refused");
+
+    let open = Client::start(EMPTY, "inspectbadrange").await;
+    open.open().await;
+    for arguments in [
+        json!({ "startFrame": -5 }),
+        json!({ "startFrame": 50, "endFrame": 10 }),
+    ] {
+        let out = open.call("inspect_timeline", arguments).await;
+        assert_eq!(out["status"], "refused", "{out}");
+    }
+}

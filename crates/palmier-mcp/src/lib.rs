@@ -57,6 +57,34 @@ fn ok(value: Value) -> Result<CallToolResult, ErrorData> {
 
 /// A malformed call: the request's *shape* is wrong. Protocol-level, like the ones
 /// `rmcp` raises when a required field is missing.
+/// Minimal base64 for image payloads. Pulling a crate in for forty lines of table
+/// lookup is not worth the dependency.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 fn invalid(message: impl Into<String>) -> ErrorData {
     ErrorData::invalid_params(message.into(), None)
 }
@@ -244,6 +272,24 @@ pub struct ImportMediaArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GetMediaArgs {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectTimelineArgs {
+    /// Project frame to render. Defaults to 0.
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+    /// Optional. Sample `maxFrames` evenly across `[startFrame, endFrame)` instead of
+    /// rendering one frame.
+    #[serde(default)]
+    pub end_frame: Option<i64>,
+    /// How many frames to sample across the range. Defaults to 1, capped at 6.
+    #[serde(default)]
+    pub max_frames: Option<usize>,
+    /// Overlay a 0–1 coordinate grid over the canvas. Defaults to true.
+    #[serde(default)]
+    pub grid: Option<bool>,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -597,6 +643,93 @@ merge before anything moves."
             delta_frames: args.delta_frames,
         };
         self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "See the composited timeline — what a viewer would actually see at \
+a given frame, with every visible clip stacked as the render will place them. Use this \
+to check that an edit landed: a cut's timing, a clip's position, which layer is on top. \
+Reading the timeline tells you the numbers; this tells you the picture.\n\n\
+Frames are project frames from get_timeline. Pass startFrame alone for one frame, or \
+add endFrame to sample maxFrames evenly across [startFrame, endFrame). Frames past the \
+end of all content render black. Each image is preceded by a text block naming its frame \
+and listing the clip ids visible in it, topmost first, so what you see maps straight \
+back to the clips you can edit. A 0–1 coordinate grid is drawn over the canvas by \
+default, origin top-left, one cell per 0.1."
+    )]
+    async fn inspect_timeline(
+        &self,
+        Parameters(args): Parameters<InspectTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        let Ok(project) = session.project() else {
+            return refused("no project is open — call manage_project with action 'open' first");
+        };
+        let Some(timeline) = project.timelines.first().cloned() else {
+            return refused("the project has no timelines");
+        };
+
+        let start = args.start_frame.unwrap_or(0);
+        if start < 0 {
+            return refused(format!(
+                "startFrame {start} is before the start of the timeline"
+            ));
+        }
+        let count = args.max_frames.unwrap_or(1).clamp(1, 6);
+        let frames: Vec<i64> = match args.end_frame {
+            None => vec![start],
+            Some(end) if end <= start => {
+                return refused(format!(
+                    "endFrame ({end}) must be greater than startFrame ({start})"
+                ));
+            }
+            Some(end) => {
+                if count == 1 {
+                    vec![start]
+                } else {
+                    let span = end - start;
+                    (0..count)
+                        .map(|i| start + span * i as i64 / count as i64)
+                        .collect()
+                }
+            }
+        };
+
+        let options = palmier_media::FrameOptions {
+            grid: args.grid.unwrap_or(true),
+            ..Default::default()
+        };
+        let resolve = session.resolver();
+
+        let mut blocks = Vec::with_capacity(frames.len() * 2);
+        for frame in frames {
+            let visible: Vec<String> = timeline
+                .visible_clips_at(frame)
+                .iter()
+                .map(|c| c.id.clone().unwrap_or_default())
+                .collect();
+            let seconds = frame as f64 / timeline.fps.max(1) as f64;
+            let meta = json!({
+                "frame": frame,
+                "seconds": seconds,
+                "visibleClipIds": visible,
+                "canvas": { "width": timeline.width, "height": timeline.height },
+            });
+            blocks.push(ContentBlock::text(
+                serde_json::to_string(&meta).unwrap_or_default(),
+            ));
+
+            match palmier_media::frame_png(&timeline, &resolve, frame, options) {
+                Ok(png) => blocks.push(ContentBlock::image(
+                    base64_encode(&png),
+                    "image/png".to_string(),
+                )),
+                Err(error) => {
+                    return refused(format!("cannot render frame {frame}: {error}"));
+                }
+            }
+        }
+        Ok(CallToolResult::success(blocks))
     }
 
     #[tool(

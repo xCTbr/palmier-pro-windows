@@ -5,7 +5,7 @@ use std::process::Command;
 
 use palmier_core::timeline::Timeline;
 
-use crate::graph::{FilterGraph, ResolvedMedia, build};
+use crate::graph::{FilterGraph, ResolvedMedia, build, build_with};
 use crate::{MediaError, require_tool};
 
 #[derive(Debug, Clone)]
@@ -111,26 +111,86 @@ fn run(graph: &FilterGraph, encoder: &str, options: &RenderOptions) -> Result<()
     Ok(())
 }
 
-/// Render one frame to an image — the seed of layer 1's preview.
+/// How a single composited frame should be drawn.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameOptions {
+    /// Overlay a 0–1 coordinate grid so an agent can describe positions in the canvas.
+    pub grid: bool,
+    /// Longest edge of the returned image. Keeps a response readable without shipping a
+    /// full-resolution frame as base64.
+    pub max_width: i64,
+}
+
+impl Default for FrameOptions {
+    fn default() -> Self {
+        Self {
+            grid: true,
+            max_width: 640,
+        }
+    }
+}
+
+/// Render one composited frame to an image file — what an agent looks at to check its
+/// own edit, and the seed of layer 1's preview.
+///
+/// The frame number is deliberately *not* burned into the pixels. The original does that
+/// because its agent only receives images; over MCP a text block precedes each image,
+/// which is unambiguous, machine-readable, and does not make the render depend on
+/// `drawtext`, libfreetype, and a platform-specific font path.
 pub fn render_frame(
     timeline: &Timeline,
     resolve: &dyn Fn(&str) -> Option<ResolvedMedia>,
     frame: i64,
     output: &Path,
+    options: FrameOptions,
 ) -> Result<(), MediaError> {
     require_tool("ffmpeg")?;
-    let (graph, _) = build(timeline, resolve);
+    let (graph, _) = build_with(timeline, resolve, false);
+    let frame = frame.max(0);
     let at = frame as f64 / graph.fps.max(1) as f64;
+
+    let mut post = String::new();
+    // A frame past the end of all content still has an answer: black. Pad the composited
+    // stream so the frame exists, which is what the tool contract promises.
+    if at >= graph.duration_seconds {
+        let extra = at - graph.duration_seconds + 1.0;
+        post.push_str(&format!(
+            "tpad=stop_mode=add:stop_duration={extra:.6}:color=black"
+        ));
+        post.push(',');
+    }
+    // Select by frame number rather than seeking by time. A seek lands on the nearest
+    // decodable frame; an editor needs the frame it asked for.
+    post.push_str(&format!("select=eq(n\\,{frame})"));
+    if options.grid {
+        if !post.is_empty() {
+            post.push(',');
+        }
+        // Ten cells across each axis, so one cell edge is 0.1 in canvas coordinates.
+        post.push_str("drawgrid=w=iw/10:h=ih/10:t=1:c=white@0.35");
+    }
+    if options.max_width > 0 && graph.width > options.max_width {
+        if !post.is_empty() {
+            post.push(',');
+        }
+        post.push_str(&format!("scale={}:-2", options.max_width));
+    }
+
+    let filter = format!(
+        "{};[{}]{}[shown]",
+        graph.filter_complex, graph.video_label, post
+    );
+    let label = "shown";
 
     let mut command = Command::new("ffmpeg");
     command.args(["-v", "error", "-nostdin", "-y"]);
     for input in &graph.inputs {
         command.arg("-i").arg(&input.path);
     }
-    command.arg("-filter_complex").arg(&graph.filter_complex);
-    command.arg("-map").arg(format!("[{}]", graph.video_label));
-    command.args(["-ss", &format!("{at:.6}")]);
+    command.arg("-filter_complex").arg(&filter);
+    command.arg("-map").arg(format!("[{label}]"));
     command.args(["-frames:v", "1"]);
+    command.args(["-fps_mode", "passthrough"]);
     command.arg(output);
 
     let out = command
@@ -143,4 +203,32 @@ pub fn render_frame(
         });
     }
     Ok(())
+}
+
+/// Render one composited frame and hand back the PNG bytes.
+pub fn frame_png(
+    timeline: &Timeline,
+    resolve: &dyn Fn(&str) -> Option<ResolvedMedia>,
+    frame: i64,
+    options: FrameOptions,
+) -> Result<Vec<u8>, MediaError> {
+    // Unique per process and thread: renders run in parallel under test.
+    let dir = std::env::temp_dir().join(format!(
+        "palmier-frame-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&dir).map_err(|source| MediaError::Io {
+        path: dir.display().to_string(),
+        source,
+    })?;
+    let path = dir.join(format!("f{frame}.png"));
+    let result = render_frame(timeline, resolve, frame, &path, options).and_then(|()| {
+        std::fs::read(&path).map_err(|source| MediaError::Io {
+            path: path.display().to_string(),
+            source,
+        })
+    });
+    let _ = std::fs::remove_file(&path);
+    result
 }

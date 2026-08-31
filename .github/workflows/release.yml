@@ -1,0 +1,44 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  binaries:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+            artifact: palmier.exe
+          - os: ubuntu-latest
+            label: linux-x64
+            artifact: palmier
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --bin palmier
+
+      # A smoke test on the runner: a binary that cannot start is not a build.
+      - name: Verify the binary runs
+        shell: bash
+        run: |
+          ./target/release/${{ matrix.artifact }} --version
+          ./target/release/${{ matrix.artifact }} --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: palmier-${{ matrix.label }}
+          path: target/release/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 30
