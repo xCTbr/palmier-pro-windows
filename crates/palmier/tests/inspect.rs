@@ -171,3 +171,47 @@ fn tempdir(tag: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
+
+/// Double-clicking a console program on Windows runs it with no arguments and closes
+/// the window instantly. Running bare must therefore explain itself rather than fail
+/// silently — that is the first thing a new user does, and it is how they learn what
+/// this is.
+#[test]
+fn running_with_no_arguments_explains_what_this_is() {
+    let out = bin().output().unwrap();
+    assert!(
+        out.status.success(),
+        "a bare run must not look like an error"
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("not an installer"), "{text}");
+    assert!(
+        text.contains("serve"),
+        "it must name the command to run: {text}"
+    );
+    assert!(
+        text.contains("claude mcp add"),
+        "and how to connect an agent: {text}"
+    );
+    assert!(
+        text.contains("FFmpeg"),
+        "and whether FFmpeg is there: {text}"
+    );
+}
+
+#[test]
+fn the_ffmpeg_check_reports_what_is_actually_installed() {
+    let out = bin().output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let found = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if found {
+        assert!(text.contains("FFmpeg: found"), "{text}");
+    } else {
+        assert!(text.contains("NOT FOUND"), "{text}");
+    }
+}

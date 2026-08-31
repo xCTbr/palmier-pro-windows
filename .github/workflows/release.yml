@@ -30,11 +30,14 @@ jobs:
       - run: cargo build --release --bin palmier
 
       # A smoke test on the runner: a binary that cannot start is not a build.
+      # A binary that cannot start is not a build. The bare run is what a user gets
+      # from double-clicking, so it is checked too.
       - name: Verify the binary runs
         shell: bash
         run: |
           ./target/release/${{ matrix.artifact }} --version
           ./target/release/${{ matrix.artifact }} --help
+          ./target/release/${{ matrix.artifact }} < /dev/null | grep -q "not an installer"
 
       - uses: actions/upload-artifact@v4
         with:

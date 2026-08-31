@@ -25,8 +25,18 @@ Linux and Windows are supported. macOS builds and tests in CI but is not a targe
 
 **Download a build.** Every push to `main` publishes binaries for Windows and Linux —
 grab one from the [Actions tab](https://github.com/xCTbr/palmier-pro-windows/actions/workflows/release.yml),
-open the most recent run, and download the artifact for your platform. You still need
-`ffmpeg` and `ffprobe` on `PATH`.
+open the most recent run, and download the artifact for your platform.
+
+`palmier` is a command-line program, not an installer, and it needs `ffmpeg` and
+`ffprobe` on `PATH`. On Windows:
+
+```powershell
+winget install Gyan.FFmpeg     # then open a new terminal so PATH updates
+.\palmier.exe serve
+```
+
+Windows will warn that the binary is unrecognised. It is unsigned — this project has no
+code-signing certificate — so SmartScreen has nothing to check it against.
 
 Or build it yourself:
 

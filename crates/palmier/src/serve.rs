@@ -14,6 +14,14 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
 
     let bound = listener.local_addr()?;
     println!("palmier: MCP at http://{bound}/mcp");
+    // Say it now, not when an export fails twenty minutes into a session.
+    let missing = crate::missing_tools();
+    if !missing.is_empty() {
+        eprintln!(
+            "palmier: warning — {} not on PATH. Editing works; rendering and media import do not.",
+            missing.join(" and ")
+        );
+    }
     println!("  claude mcp add --transport http palmier http://{bound}/mcp");
 
     axum::serve(listener, palmier_mcp::http_router())
