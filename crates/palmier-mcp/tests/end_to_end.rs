@@ -1005,3 +1005,329 @@ async fn inspecting_refuses_a_bad_range_or_a_closed_project() {
         assert_eq!(out["status"], "refused", "{out}");
     }
 }
+
+// ------------------------------------------- bootstrap, silence, packaging
+//
+// Everything below came from one real editing session. An agent cut the dead air out of
+// a talking-head recording and reported what it had to do outside the tool to manage it:
+// detect silence with ffmpeg by hand, hand-write a `.palmier` because nothing could
+// create one, and convert seconds to frames itself.
+
+/// A source that speaks, pauses, speaks, pauses, speaks.
+fn make_speech_with_gaps(dir: &std::path::Path, name: &str) -> String {
+    let path = dir.join(name);
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=300:duration=2"])
+        .args(["-f", "lavfi", "-i", "anullsrc=duration=1.5"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=400:duration=2"])
+        .args(["-f", "lavfi", "-i", "anullsrc=duration=1.5"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=500:duration=2"])
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=30:duration=9",
+        ])
+        .args([
+            "-filter_complex",
+            "[0:a][1:a][2:a][3:a][4:a]concat=n=5:v=0:a=1[a]",
+        ])
+        .args(["-map", "[a]", "-map", "5:v"])
+        .args([
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&path)
+        .output()
+        .expect("ffmpeg must run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    path.to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn a_project_can_be_created_from_nothing() {
+    // Without this the whole "edit my video" flow was unreachable: every tool needs an
+    // open project, and the only way to get one was to hand-write a .palmier first.
+    let client = Client::start(EMPTY, "create").await;
+    let created = client
+        .call(
+            "manage_project",
+            json!({ "action": "create", "fps": 24, "width": 1280, "height": 720 }),
+        )
+        .await;
+    assert_eq!(created["status"], "created");
+    assert_eq!(created["fps"], 24);
+    assert_eq!(
+        created["path"],
+        Value::Null,
+        "nothing is written until you save"
+    );
+
+    let tracks = created["tracks"].as_array().unwrap();
+    assert_eq!(
+        tracks.len(),
+        2,
+        "a new project is usable immediately: one video, one audio"
+    );
+    assert_eq!(tracks[0]["type"], "video");
+    assert_eq!(tracks[1]["type"], "audio");
+
+    // And it is genuinely open: the next tool works without an `open` call.
+    let timeline = client.timeline().await;
+    assert_eq!(timeline["fps"], 24);
+    assert_eq!(timeline["totalFrames"], 0);
+}
+
+#[tokio::test]
+async fn creating_with_a_path_writes_a_package_directory() {
+    let client = Client::start(EMPTY, "createat").await;
+    let target = client.dir.join("new.palmier");
+    let created = client
+        .call(
+            "manage_project",
+            json!({ "action": "create", "path": target.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(created["status"], "created");
+
+    // A `.palmier` is a folder holding project.json — not a file named `.palmier`.
+    assert!(
+        target.is_dir(),
+        "expected a package directory at {}",
+        target.display()
+    );
+    assert!(target.join("project.json").is_file());
+}
+
+#[tokio::test]
+async fn invalid_creation_settings_are_rejected() {
+    let client = Client::start(EMPTY, "createbad").await;
+    for bad in [
+        json!({ "action": "create", "fps": 0 }),
+        json!({ "action": "create", "fps": -30 }),
+        json!({ "action": "create", "width": 1 }),
+        json!({ "action": "create", "height": 0 }),
+    ] {
+        let out = client.call("manage_project", bad.clone()).await;
+        assert!(out.to_string().contains("invalid"), "{bad} gave {out}");
+    }
+}
+
+#[tokio::test]
+async fn silence_is_reported_in_frames_ready_to_cut_with() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "silence").await;
+    client
+        .call("manage_project", json!({ "action": "create", "fps": 30 }))
+        .await;
+    let source = make_speech_with_gaps(&client.dir, "speech.mp4");
+    let imported = client
+        .call("import_media", json!({ "paths": [source] }))
+        .await;
+    let media_ref = imported["media"][0]["mediaRef"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let found = client
+        .call("detect_silence", json!({ "mediaRef": media_ref }))
+        .await;
+    assert_eq!(found["fps"], 30);
+    let silences = found["silences"].as_array().unwrap();
+    assert_eq!(silences.len(), 2, "two pauses were recorded: {found}");
+    assert_eq!(
+        found["speech"].as_array().unwrap().len(),
+        3,
+        "three spans of sound"
+    );
+
+    // The padding keeps a cut off the edge of a word, so a 1.5s pause is reported as
+    // 1.2s — shrunk by 0.15s at each end.
+    let first = &silences[0];
+    let duration = first["durationSeconds"].as_f64().unwrap();
+    assert!(
+        (duration - 1.2).abs() < 0.15,
+        "expected ~1.2s after padding, got {duration}"
+    );
+
+    // Frames, not seconds: they go straight into ripple_delete_ranges.
+    assert!(first["startFrame"].is_i64() && first["endFrame"].is_i64());
+    let expected = (first["startSeconds"].as_f64().unwrap() * 30.0).round() as i64;
+    assert_eq!(first["startFrame"].as_i64().unwrap(), expected);
+}
+
+#[tokio::test]
+async fn detected_silence_cuts_without_any_conversion() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "tighten").await;
+    let created = client
+        .call("manage_project", json!({ "action": "create", "fps": 30 }))
+        .await;
+    let video_track = created["tracks"][0]["trackId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let source = make_speech_with_gaps(&client.dir, "speech.mp4");
+    let imported = client
+        .call("import_media", json!({ "paths": [source] }))
+        .await;
+    let media_ref = imported["media"][0]["mediaRef"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    client
+        .call(
+            "add_clips",
+            json!({ "entries": [{ "mediaRef": media_ref, "trackId": video_track,
+                                  "startFrame": 0, "endFrame": 270 }] }),
+        )
+        .await;
+
+    let found = client
+        .call("detect_silence", json!({ "mediaRef": media_ref }))
+        .await;
+    let ranges: Vec<Value> = found["silences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| json!({ "startFrame": s["startFrame"], "endFrame": s["endFrame"] }))
+        .collect();
+
+    let cut = client
+        .call("ripple_delete_ranges", json!({ "ranges": ranges }))
+        .await;
+    assert_eq!(cut["status"], "applied");
+
+    let after = client.timeline().await["totalFrames"].as_i64().unwrap();
+    assert!(
+        (190..=205).contains(&after),
+        "270 frames minus two 1.2s pauses is about 198; got {after}"
+    );
+}
+
+#[tokio::test]
+async fn detect_silence_refuses_media_it_cannot_analyse() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "silencebad").await;
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+
+    let unknown = client
+        .call("detect_silence", json!({ "mediaRef": "ghost" }))
+        .await;
+    assert_eq!(unknown["status"], "refused");
+
+    // A file with no audio track cannot have silence detected in it.
+    let silent = make_source(&client.dir, "mute.mp4", "testsrc");
+    let stripped = client.dir.join("noaudio.mp4");
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i", &silent, "-an", "-c:v", "copy"])
+        .arg(&stripped)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let imported = client
+        .call(
+            "import_media",
+            json!({ "paths": [stripped.to_string_lossy()] }),
+        )
+        .await;
+    let media_ref = imported["media"][0]["mediaRef"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let no_audio = client
+        .call("detect_silence", json!({ "mediaRef": media_ref }))
+        .await;
+    assert_eq!(no_audio["status"], "refused");
+    assert!(
+        no_audio["reason"].as_str().unwrap().contains("no audio"),
+        "{no_audio}"
+    );
+}
+
+#[tokio::test]
+async fn saving_to_a_palmier_path_writes_a_package_that_reopens() {
+    let client = Client::start(EMPTY, "package").await;
+    client
+        .call("manage_project", json!({ "action": "create", "fps": 30 }))
+        .await;
+
+    let target = client.dir.join("edit.palmier");
+    let saved = client
+        .call(
+            "manage_project",
+            json!({ "action": "save", "path": target.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(saved["status"], "saved");
+    assert!(target.is_dir(), "a .palmier must be a directory");
+    assert!(target.join("project.json").is_file());
+    assert!(
+        target.join("media.json").is_file(),
+        "the manifest travels with the project"
+    );
+
+    // The round trip that matters: what was written opens again.
+    let reopened = client
+        .call(
+            "manage_project",
+            json!({ "action": "open", "path": target.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(reopened["status"], "open");
+    assert_eq!(client.timeline().await["fps"], 30);
+}
+
+#[tokio::test]
+async fn an_explicit_json_path_still_writes_that_exact_file() {
+    let client = Client::start(EMPTY, "explicitjson").await;
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+    let target = client.dir.join("custom").join("mine.json");
+    let saved = client
+        .call(
+            "manage_project",
+            json!({ "action": "save", "path": target.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(saved["status"], "saved");
+    assert!(target.is_file(), "an explicit .json path means write here");
+}
+
+#[tokio::test]
+async fn a_refusal_names_the_way_forward() {
+    // The old message said only "call open first", when there was no way to create a
+    // project at all. A refusal that does not name a next step is a dead end.
+    let client = Client::start(EMPTY, "deadend").await;
+    for tool in ["get_timeline", "get_media", "detect_silence"] {
+        let out = client.call(tool, json!({ "mediaRef": "x" })).await;
+        let text = out.to_string();
+        assert!(
+            text.contains("create"),
+            "{tool} does not mention create: {text}"
+        );
+    }
+}

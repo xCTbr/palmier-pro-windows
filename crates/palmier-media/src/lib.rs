@@ -6,10 +6,12 @@
 pub mod graph;
 pub mod probe;
 pub mod render;
+pub mod silence;
 
 pub use graph::{FilterGraph, ResolvedMedia, build_with};
 pub use probe::{MediaInfo, probe};
 pub use render::{FrameOptions, RenderOptions, frame_png, render, render_frame};
+pub use silence::{SilentSpan, detect as detect_silence, speech_spans};
 
 use std::process::Command;
 

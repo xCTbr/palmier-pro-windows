@@ -29,11 +29,47 @@ pub enum SessionError {
         path: String,
         source: std::io::Error,
     },
-    #[error("nowhere to save: the project was created in memory, so save needs a path")]
+    #[error("this project was created in memory and has never been saved — give save a path")]
     NoPath,
+    #[error("invalid project settings: fps {fps}, {width}x{height}")]
+    InvalidSettings { fps: i64, width: i64, height: i64 },
+    #[error("{0}")]
+    Decode(#[from] palmier_core::DecodeError),
 }
 
 impl Session {
+    /// Start an empty project in memory. Nothing is written until `save`.
+    ///
+    /// Without this the whole "edit my video" flow is unreachable: every other tool
+    /// needs an open project, and the only way to get one was to hand-write a
+    /// `.palmier` folder first.
+    pub fn create(&mut self, fps: i64, width: i64, height: i64) -> Result<(), SessionError> {
+        if fps <= 0 || width <= 1 || height <= 1 {
+            return Err(SessionError::InvalidSettings { fps, width, height });
+        }
+        let json = serde_json::json!({
+            "timelines": [{
+                "id": uuid::Uuid::new_v4().to_string(),
+                "name": "Timeline 1",
+                "fps": fps,
+                "width": width,
+                "height": height,
+                "tracks": [
+                    { "id": uuid::Uuid::new_v4().to_string(), "type": "video", "clips": [] },
+                    { "id": uuid::Uuid::new_v4().to_string(), "type": "audio", "clips": [] }
+                ]
+            }]
+        });
+        let bytes = serde_json::to_vec(&json).expect("a literal cannot fail to serialize");
+        let mut project = ProjectFile::decode(&bytes)?;
+        project.active_timeline_id = project.timelines[0].id.clone();
+        self.edit = Some(EditSession::new(project));
+        self.path = None;
+        self.manifest = MediaManifest::default();
+        self.dirty = true;
+        Ok(())
+    }
+
     pub fn open(&mut self, path: &Path) -> Result<&mut EditSession, SessionError> {
         let project = load_project(path)?;
         let file = if path.is_dir() {
@@ -107,10 +143,19 @@ impl Session {
             .map(Path::to_path_buf)
             .or_else(|| self.path.clone())
             .ok_or(SessionError::NoPath)?;
-        let target = if target.is_dir() {
-            target.join("project.json")
-        } else {
+        // A `.palmier` is a package directory holding project.json, media.json, and
+        // media/ — not a single file. Only an explicit `.json` path means "write here".
+        let target = if target
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        {
             target
+        } else {
+            std::fs::create_dir_all(&target).map_err(|source| SessionError::Write {
+                path: target.display().to_string(),
+                source,
+            })?;
+            target.join("project.json")
         };
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|source| SessionError::Write {

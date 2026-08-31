@@ -10,7 +10,7 @@ Rust workspace. GPLv3. Rebuilt from [Palmier Pro](https://github.com/palmier-io/
 
 ## Current state
 
-**Layer 0 is complete.** `palmier serve` exposes 15 MCP tools over loopback HTTP, or
+**Layer 0 is complete.** `palmier serve` exposes 17 MCP tools over loopback HTTP, or
 over stdio with `--stdio` for a desktop client that spawns the process itself; a
 project can be opened, edited, rendered, and saved. Specs 001–004 under `specs/` record
 what was built, what was audited from the original, and where this project deliberately
@@ -41,7 +41,7 @@ A macOS-only failure is worth fixing, never worth blocking on.
 Each layer must be usable on its own. Do not start a layer before the one below it
 works end to end.
 
-- **L0** — MCP daemon: project model, `EditCommand` layer, 15 tools, render via
+- **L0** — MCP daemon: project model, `EditCommand` layer, 17 tools, render via
   `ffmpeg filter_complex`. No GPU, no UI. **Done.**
 - **L1** — own compositor on wgpu; the 12 CIKernel shaders ported to WGSL; color,
   effects, keyframes; single-frame render on demand.

@@ -28,6 +28,9 @@ use session::Session;
 
 pub const DEFAULT_PORT: u16 = 19789;
 
+/// Said often enough to be worth saying once.
+const NO_PROJECT: &str = "no project is open — call manage_project with action 'create' for a new edit, or 'open' for an existing .palmier";
+
 #[derive(Clone)]
 pub struct Palmier {
     session: Arc<Mutex<Session>>,
@@ -100,11 +103,44 @@ fn refused(reason: impl Into<String>) -> Result<CallToolResult, ErrorData> {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ManageProjectArgs {
-    /// `open`, `save`, `close`, or `describe`.
+    /// `create`, `open`, `save`, `close`, or `describe`.
     pub action: String,
-    /// A `.palmier` folder or a `project.json`. Required for `open`; optional for `save`.
+    /// A `.palmier` folder or a `project.json`. Required for `open`; optional for
+    /// `save` and `create`.
+    ///
+    /// On Windows write the path with forward slashes (`C:/work/edit.palmier`) or with
+    /// doubled backslashes — a single backslash is not a legal escape inside a JSON
+    /// string, so the call is rejected before it reaches this tool.
     #[serde(default)]
     pub path: Option<String>,
+    /// `create` only. Timeline frame rate. Defaults to 30.
+    #[serde(default)]
+    pub fps: Option<i64>,
+    /// `create` only. Canvas width in pixels. Defaults to 1920.
+    #[serde(default)]
+    pub width: Option<i64>,
+    /// `create` only. Canvas height in pixels. Defaults to 1080.
+    #[serde(default)]
+    pub height: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectSilenceArgs {
+    /// Media to analyse, from get_media or import_media.
+    pub media_ref: String,
+    /// Level below which audio counts as silence, in dBFS. Defaults to -30; go lower
+    /// for a noisy room, higher to catch softer pauses.
+    #[serde(default)]
+    pub noise_db: Option<f64>,
+    /// Ignore pauses shorter than this many seconds. Defaults to 0.5 — about the gap
+    /// between sentences rather than between words.
+    #[serde(default)]
+    pub min_seconds: Option<f64>,
+    /// Shrink each reported silence by this many seconds at both ends, so a cut does
+    /// not clip the start or end of a word. Defaults to 0.15.
+    #[serde(default)]
+    pub padding_seconds: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -317,7 +353,12 @@ pub struct UndoArgs {
 #[tool_router]
 impl Palmier {
     #[tool(
-        description = "Open, save, close, or describe the project this session edits. \
+        description = "Create, open, save, close, or describe the project this session \
+edits.\n\n\
+Start with `create` for a new edit: it makes an empty project in memory with one video \
+track and one audio track, and writes nothing until you save. Pass a path to `create` to \
+save it there at once, or to `save` later. Use `open` for a `.palmier` that already \
+exists. On Windows, write paths with forward slashes. \
 Editing never writes to disk; the project is written only when you save it here."
     )]
     async fn manage_project(
@@ -326,6 +367,36 @@ Editing never writes to disk; the project is written only when you save it here.
     ) -> Result<CallToolResult, ErrorData> {
         let mut session = self.session.lock().await;
         match args.action.as_str() {
+            "create" => {
+                // Well-formed but impossible settings are a refusal, not a protocol
+                // error — the agent should read the reason and pick better numbers.
+                if let Err(error) = session.create(
+                    args.fps.unwrap_or(30),
+                    args.width.unwrap_or(1920),
+                    args.height.unwrap_or(1080),
+                ) {
+                    return refused(error.to_string());
+                }
+                if let Some(path) = &args.path
+                    && let Err(error) = session.save(Some(&PathBuf::from(path)))
+                {
+                    return refused(error.to_string());
+                }
+                let project = session.project().map_err(|e| invalid(e.to_string()))?;
+                let timeline = &project.timelines[0];
+                ok(json!({
+                    "status": "created",
+                    "path": session.path().map(|p| p.display().to_string()),
+                    "timelineId": timeline.id.clone().unwrap_or_default(),
+                    "fps": timeline.fps,
+                    "width": timeline.width,
+                    "height": timeline.height,
+                    "tracks": timeline.tracks.iter().map(|t| json!({
+                        "trackId": t.id.clone().unwrap_or_default(),
+                        "type": render::clip_type(t.track_type),
+                    })).collect::<Vec<_>>(),
+                }))
+            }
             "open" => {
                 let path = args.path.ok_or_else(|| invalid("`open` needs a path"))?;
                 session
@@ -360,7 +431,7 @@ Editing never writes to disk; the project is written only when you save it here.
                 "unsavedChanges": session.is_dirty(),
             })),
             other => refused(format!(
-                "unknown action `{other}`; expected open, save, close, or describe"
+                "unknown action `{other}`; expected create, open, save, close, or describe"
             )),
         }
     }
@@ -378,7 +449,7 @@ omitted. `gaps` lists a track's empty spans; no `gaps` key means it is contiguou
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
         let Ok(project) = session.project() else {
-            return refused("no project is open — call manage_project with action 'open' first");
+            return refused(NO_PROJECT);
         };
         let Some(timeline) = project.timelines.first() else {
             return refused("the project has no timelines");
@@ -663,7 +734,7 @@ default, origin top-left, one cell per 0.1."
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
         let Ok(project) = session.project() else {
-            return refused("no project is open — call manage_project with action 'open' first");
+            return refused(NO_PROJECT);
         };
         let Some(timeline) = project.timelines.first().cloned() else {
             return refused("the project has no timelines");
@@ -744,7 +815,7 @@ call with no partial state."
     ) -> Result<CallToolResult, ErrorData> {
         let mut session = self.session.lock().await;
         if !session.is_open() {
-            return refused("no project is open — call manage_project with action 'open' first");
+            return refused(NO_PROJECT);
         }
         if args.paths.is_empty() {
             return refused("`paths` is empty");
@@ -790,7 +861,7 @@ clips using it render as black."
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
         if !session.is_open() {
-            return refused("no project is open — call manage_project with action 'open' first");
+            return refused(NO_PROJECT);
         }
         let dir = session.package_dir();
         let media: Vec<Value> = session
@@ -821,6 +892,82 @@ clips using it render as black."
     }
 
     #[tool(
+        description = "Find the silent stretches of a media file, reported in timeline \
+frames ready to hand straight to ripple_delete_ranges.\n\n\
+This is how you tighten talking-head footage: detect the pauses, then cut them. Each \
+silence is shrunk by `paddingSeconds` at both ends so a cut does not clip the start or \
+end of a word — the 0.15s default leaves a breath of room. `speech` lists the inverse, \
+the spans that carry sound.\n\n\
+Frames are computed at the open timeline's frame rate, so the ranges need no conversion \
+before you cut with them."
+    )]
+    async fn detect_silence(
+        &self,
+        Parameters(args): Parameters<DetectSilenceArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        let Ok(project) = session.project() else {
+            return refused(NO_PROJECT);
+        };
+        let Some(timeline) = project.timelines.first() else {
+            return refused("the project has no timelines");
+        };
+        let fps = timeline.fps.max(1);
+
+        let resolve = session.resolver();
+        let Some(media) = resolve(&args.media_ref) else {
+            return refused(format!(
+                "`{}` is not in this project's media, or its file is missing from disk",
+                args.media_ref
+            ));
+        };
+        let info = match palmier_media::probe(&media.path) {
+            Ok(info) => info,
+            Err(error) => return refused(error.to_string()),
+        };
+        if !info.has_audio {
+            return refused(format!("`{}` has no audio track", args.media_ref));
+        }
+
+        let padding = args.padding_seconds.unwrap_or(0.15).max(0.0);
+        let silences = match palmier_media::detect_silence(
+            &media.path,
+            args.noise_db.unwrap_or(-30.0),
+            args.min_seconds.unwrap_or(0.5),
+            info.duration_seconds,
+        ) {
+            Ok(spans) => spans,
+            Err(error) => return refused(error.to_string()),
+        };
+        let speech = palmier_media::speech_spans(&silences, info.duration_seconds);
+
+        // Shrinking by the padding is what keeps a cut off the edge of a word.
+        let to_range = |span: &palmier_media::SilentSpan, pad: f64| -> Option<Value> {
+            let start = (span.start_seconds + pad).max(0.0);
+            let end = (span.end_seconds - pad).min(info.duration_seconds);
+            if end <= start {
+                return None;
+            }
+            Some(json!({
+                "startFrame": (start * fps as f64).round() as i64,
+                "endFrame": (end * fps as f64).round() as i64,
+                "startSeconds": start,
+                "endSeconds": end,
+                "durationSeconds": end - start,
+            }))
+        };
+
+        ok(json!({
+            "mediaRef": args.media_ref,
+            "fps": fps,
+            "durationSeconds": info.duration_seconds,
+            "paddingSeconds": padding,
+            "silences": silences.iter().filter_map(|s| to_range(s, padding)).collect::<Vec<_>>(),
+            "speech": speech.iter().filter_map(|s| to_range(s, 0.0)).collect::<Vec<_>>(),
+        }))
+    }
+
+    #[tool(
         description = "Render the timeline to a video file. Clips are composited bottom \
 track up, gaps render black, and audio is mixed. Any clip whose media is missing from \
 disk is reported in `missingMedia` rather than silently omitted."
@@ -831,7 +978,7 @@ disk is reported in `missingMedia` rather than silently omitted."
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
         let Ok(project) = session.project() else {
-            return refused("no project is open — call manage_project with action 'open' first");
+            return refused(NO_PROJECT);
         };
         let Some(timeline) = project.timelines.first().cloned() else {
             return refused("the project has no timelines");
