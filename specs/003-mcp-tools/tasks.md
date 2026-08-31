@@ -14,4 +14,4 @@
 - [X] T012 Refusal tests: reported reason plus project unchanged (SC-002)
 - [X] T013 Property test over arbitrary JSON arguments (SC-004)
 - [X] T014 Assert the listener binds loopback only (SC-005)
-- [ ] T015 fmt, clippy, full suite, push, CI green on Linux and Windows
+- [X] T015 fmt, clippy, full suite, CI green on Linux, Windows, and macOS — run 33351194023
