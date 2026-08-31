@@ -45,3 +45,34 @@ jobs:
           path: target/release/${{ matrix.artifact }}
           if-no-files-found: error
           retention-days: 30
+
+  installer:
+    name: installer · windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/palmier-app
+
+      # The desktop shell is outside the workspace: it needs a system webview, which the
+      # Linux development machine has no reason to install, so it is built here alone.
+      - name: Build the installers
+        working-directory: crates/palmier-app
+        run: cargo build --release
+
+      - name: Bundle
+        working-directory: crates/palmier-app
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --no-bundle=false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: palmier-installer-windows
+          path: |
+            crates/palmier-app/target/release/bundle/msi/*.msi
+            crates/palmier-app/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30

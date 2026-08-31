@@ -1,0 +1,24 @@
+[package]
+name = "palmier-app"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+description = "An AI-native video editor you drive by talking to your coding agent"
+repository = "https://github.com/xCTbr/palmier-pro-windows"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+palmier-mcp = { path = "../palmier-mcp" }
+palmier-ui = { path = "../palmier-ui" }
+
+[[bin]]
+name = "palmier-app"
+path = "src/main.rs"

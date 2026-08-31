@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The desktop shell needs a system webview, which the Linux development machine has no
+# reason to install. It is built on its own, by the Windows runner that ships it.
+exclude = ["crates/palmier-app"]
 
 [workspace.package]
 version = "0.0.1"
