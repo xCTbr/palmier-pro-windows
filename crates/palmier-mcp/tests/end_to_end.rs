@@ -1331,3 +1331,383 @@ async fn a_refusal_names_the_way_forward() {
         );
     }
 }
+
+// -------------------------------------------------- the rest of the layer-0 surface
+
+#[tokio::test]
+async fn clips_can_be_linked_and_unlinked() {
+    // The commands existed and were tested from the first day of the edit layer; the
+    // tool did not, so an agent could not link anything.
+    let client = Client::start(FIXTURE, "links").await;
+    client.open().await;
+
+    let linked = client
+        .call(
+            "manage_clip_links",
+            json!({ "action": "link", "clipIds": ["a", "d"] }),
+        )
+        .await;
+    assert_eq!(linked["status"], "applied");
+
+    let tl = client.timeline().await;
+    let a = &tl["tracks"][0]["clips"][0];
+    let d = &tl["tracks"][1]["clips"][0];
+    assert!(a["linkGroupId"].is_string());
+    assert_eq!(
+        a["linkGroupId"], d["linkGroupId"],
+        "both sides share one group"
+    );
+
+    // Proof it means something: moving one now moves the other.
+    client
+        .call(
+            "move_clips",
+            json!({ "moves": [{ "clipId": "a", "toTrackId": "v1", "toFrame": 200 }] }),
+        )
+        .await;
+    let moved = client.timeline().await;
+    assert_eq!(
+        moved["tracks"][1]["clips"][0]["startFrame"], 200,
+        "the partner followed"
+    );
+
+    client
+        .call(
+            "manage_clip_links",
+            json!({ "action": "unlink", "clipIds": ["a"] }),
+        )
+        .await;
+    let after = client.timeline().await;
+    assert!(after["tracks"][0]["clips"][0]["linkGroupId"].is_null());
+}
+
+#[tokio::test]
+async fn linking_one_clip_alone_is_refused() {
+    let client = Client::start(FIXTURE, "linkone").await;
+    client.open().await;
+    let out = client
+        .call(
+            "manage_clip_links",
+            json!({ "action": "link", "clipIds": ["a"] }),
+        )
+        .await;
+    assert_eq!(out["status"], "refused");
+}
+
+#[tokio::test]
+async fn markers_survive_the_ripple_that_moves_their_content() {
+    let client = Client::start(FIXTURE, "markers").await;
+    client.open().await;
+
+    let added = client
+        .call(
+            "manage_markers",
+            json!({ "action": "add", "name": "check this", "startFrame": 75, "comment": "reshoot?" }),
+        )
+        .await;
+    assert_eq!(added["status"], "applied");
+    let marker_id = added["createdMarkerIds"][0].as_str().unwrap().to_string();
+
+    let listed = client.timeline().await;
+    let mine = listed["markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["markerId"] == marker_id.as_str())
+        .expect("the marker is on the timeline");
+    assert_eq!(mine["name"], "check this");
+    assert_eq!(mine["startFrame"], 75);
+
+    // The point of a marker: it stays on the shot it was about.
+    client
+        .call(
+            "ripple_delete_ranges",
+            json!({ "ranges": [{ "startFrame": 0, "endFrame": 30 }] }),
+        )
+        .await;
+    let after = client.timeline().await;
+    let moved = after["markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["markerId"] == marker_id.as_str())
+        .expect("still there");
+    assert_eq!(
+        moved["startFrame"], 45,
+        "the marker moved back with its content"
+    );
+
+    client
+        .call(
+            "manage_markers",
+            json!({ "action": "update", "markerId": marker_id, "name": "fixed" }),
+        )
+        .await;
+    let renamed = client.timeline().await;
+    assert!(
+        renamed["markers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["name"] == "fixed")
+    );
+
+    client
+        .call(
+            "manage_markers",
+            json!({ "action": "remove", "markerId": marker_id }),
+        )
+        .await;
+    let gone = client.timeline().await;
+    assert!(
+        !gone["markers"]
+            .as_array()
+            .map(|m| m.iter().any(|x| x["markerId"] == marker_id.as_str()))
+            .unwrap_or(false)
+    );
+}
+
+#[tokio::test]
+async fn a_marker_at_a_negative_frame_is_refused() {
+    let client = Client::start(FIXTURE, "markerbad").await;
+    client.open().await;
+    for bad in [
+        json!({ "action": "add", "startFrame": -1 }),
+        json!({ "action": "add", "startFrame": 0, "durationFrames": -5 }),
+        json!({ "action": "update", "markerId": "ghost" }),
+        json!({ "action": "remove", "markerId": "ghost" }),
+    ] {
+        let out = client.call("manage_markers", bad.clone()).await;
+        assert_eq!(out["status"], "refused", "{bad} gave {out}");
+    }
+}
+
+#[tokio::test]
+async fn project_settings_change_without_retiming_the_cut() {
+    let client = Client::start(FIXTURE, "settings").await;
+    client.open().await;
+    let before = client.timeline().await;
+    assert_eq!(before["fps"], 30);
+    assert_eq!(before["totalFrames"], 90);
+
+    let out = client
+        .call(
+            "set_project_settings",
+            json!({ "fps": 24, "width": 1280, "height": 720, "name": "Cut B" }),
+        )
+        .await;
+    assert_eq!(out["status"], "applied");
+
+    let after = client.timeline().await;
+    assert_eq!(after["fps"], 24);
+    assert_eq!(after["width"], 1280);
+    assert_eq!(after["name"], "Cut B");
+    assert_eq!(after["totalFrames"], 90, "frame counts are not rescaled");
+    assert_eq!(
+        after["durationSeconds"], 3.75,
+        "so the cut now lasts longer"
+    );
+}
+
+#[tokio::test]
+async fn invalid_project_settings_are_refused() {
+    let client = Client::start(FIXTURE, "settingsbad").await;
+    client.open().await;
+    for bad in [
+        json!({ "fps": 0 }),
+        json!({ "fps": -1 }),
+        json!({ "width": 1 }),
+    ] {
+        assert_eq!(
+            client.call("set_project_settings", bad).await["status"],
+            "refused"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_second_timeline_can_be_created_and_switched_to() {
+    let client = Client::start(FIXTURE, "timelines").await;
+    client.open().await;
+
+    let created = client
+        .call("create_timeline", json!({ "name": "Alternate", "fps": 60 }))
+        .await;
+    assert_eq!(created["status"], "applied");
+    let new_id = created["createdTimelineIds"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Creating does not switch: get_timeline still reports the original.
+    assert_eq!(client.timeline().await["fps"], 30);
+
+    let switched = client
+        .call("set_active_timeline", json!({ "timelineId": new_id }))
+        .await;
+    assert_eq!(switched["status"], "applied");
+    let now = client.timeline().await;
+    assert_eq!(now["fps"], 60);
+    assert_eq!(now["name"], "Alternate");
+    assert_eq!(now["totalFrames"], 0, "the new timeline is empty");
+
+    // And undo puts the session back on the first one.
+    client.call("undo", json!({})).await;
+    assert_eq!(client.timeline().await["fps"], 30);
+}
+
+#[tokio::test]
+async fn switching_to_an_unknown_timeline_is_refused() {
+    let client = Client::start(FIXTURE, "badtimeline").await;
+    client.open().await;
+    let out = client
+        .call("set_active_timeline", json!({ "timelineId": "ghost" }))
+        .await;
+    assert_eq!(out["status"], "refused");
+}
+
+#[tokio::test]
+async fn media_can_be_swapped_under_a_clip() {
+    let client = Client::start(FIXTURE, "swap").await;
+    client.open().await;
+    let before = client.timeline().await["tracks"][0]["clips"][0].clone();
+
+    let out = client
+        .call(
+            "swap_clip_media",
+            json!({ "clipIds": ["a"], "mediaRef": "replacement" }),
+        )
+        .await;
+    assert_eq!(out["status"], "applied");
+
+    let after = client.timeline().await["tracks"][0]["clips"][0].clone();
+    assert_eq!(after["mediaRef"], "replacement");
+    assert_eq!(
+        after["startFrame"], before["startFrame"],
+        "position is untouched"
+    );
+    assert_eq!(
+        after["durationFrames"], before["durationFrames"],
+        "so is duration"
+    );
+}
+
+#[tokio::test]
+async fn a_clips_look_can_be_copied_without_its_timing() {
+    let client = Client::start(FIXTURE, "copysettings").await;
+    client.open().await;
+    client
+        .call(
+            "set_clip_properties",
+            json!({ "clipIds": ["a"], "opacity": 0.4, "volume": 0.2 }),
+        )
+        .await;
+
+    let target_before = client.timeline().await["tracks"][0]["clips"][1].clone();
+    let out = client
+        .call(
+            "copy_clip_settings",
+            json!({ "fromClipId": "a", "toClipIds": ["b"] }),
+        )
+        .await;
+    assert_eq!(out["status"], "applied");
+
+    let target = client.timeline().await["tracks"][0]["clips"][1].clone();
+    assert_eq!(target["opacity"], 0.4, "the look came across");
+    assert_eq!(target["volume"], 0.2);
+    assert_eq!(
+        target["startFrame"], target_before["startFrame"],
+        "the timing did not"
+    );
+    assert_eq!(target["durationFrames"], target_before["durationFrames"]);
+    assert_eq!(target["id"], target_before["id"]);
+}
+
+#[tokio::test]
+async fn copying_a_clip_onto_itself_changes_nothing() {
+    let client = Client::start(FIXTURE, "copyself").await;
+    client.open().await;
+    let out = client
+        .call(
+            "copy_clip_settings",
+            json!({ "fromClipId": "a", "toClipIds": ["a"] }),
+        )
+        .await;
+    assert_eq!(out["status"], "no_op");
+}
+
+#[tokio::test]
+async fn inspect_media_probes_the_file_rather_than_trusting_the_manifest() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "inspectmedia").await;
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+    let source = make_source(&client.dir, "take.mp4", "testsrc");
+    let imported = client
+        .call("import_media", json!({ "paths": [&source] }))
+        .await;
+    let media_ref = imported["media"][0]["mediaRef"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let detail = client
+        .call("inspect_media", json!({ "mediaRef": &media_ref }))
+        .await;
+    assert_eq!(detail["name"], "take.mp4");
+    assert_eq!(detail["width"], 320);
+    assert_eq!(detail["hasAudio"], true);
+    assert_eq!(detail["resolved"], true);
+
+    // A file that vanished is reported as gone, not as its remembered self.
+    std::fs::remove_file(&source).unwrap();
+    let after = client
+        .call("inspect_media", json!({ "mediaRef": media_ref }))
+        .await;
+    assert_eq!(after["resolved"], false);
+}
+
+#[tokio::test]
+async fn a_frame_can_be_captured_to_a_file() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let (client, _, _) = two_shot_client("capture").await;
+    let output = client.dir.join("still.png");
+    let out = client
+        .call(
+            "capture_frame",
+            json!({ "frame": 10, "output": output.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(out["status"], "captured", "{out}");
+    assert_eq!(
+        out["width"], 640,
+        "a capture is full canvas, not the reading size"
+    );
+
+    let bytes = std::fs::read(&output).expect("the file must exist");
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    let (w, _) = png_size(&bytes);
+    assert_eq!(w, 640);
+}
+
+#[tokio::test]
+async fn capture_refuses_a_negative_frame() {
+    let client = Client::start(EMPTY, "capturebad").await;
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+    let out = client
+        .call(
+            "capture_frame",
+            json!({ "frame": -1, "output": client.dir.join("x.png").to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(out["status"], "refused");
+}

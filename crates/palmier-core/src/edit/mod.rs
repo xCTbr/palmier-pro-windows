@@ -73,6 +73,51 @@ pub enum EditCommand {
     UnlinkClips {
         clip_ids: Vec<String>,
     },
+    SetTimelineSettings {
+        fps: Option<i64>,
+        width: Option<i64>,
+        height: Option<i64>,
+        name: Option<String>,
+    },
+    AddMarker {
+        marker: Box<MarkerInput>,
+    },
+    UpdateMarker {
+        marker_id: String,
+        marker: Box<MarkerInput>,
+    },
+    RemoveMarkers {
+        marker_ids: Vec<String>,
+    },
+    SwapClipMedia {
+        clip_ids: Vec<String>,
+        media_ref: String,
+    },
+    CopyClipSettings {
+        from_clip_id: String,
+        to_clip_ids: Vec<String>,
+    },
+    // Project-scoped: these reach above the active timeline.
+    CreateTimeline {
+        name: Option<String>,
+        fps: i64,
+        width: i64,
+        height: i64,
+    },
+    SetActiveTimeline {
+        timeline_id: String,
+    },
+}
+
+/// Fields of a marker a caller may set. On update, `None` leaves the value alone.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MarkerInput {
+    pub name: Option<String>,
+    pub comment: Option<String>,
+    pub start_frame: Option<i64>,
+    pub duration_frames: Option<i64>,
+    pub color: Option<crate::text::Rgba>,
+    pub resolved: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +168,10 @@ pub enum RefusalReason {
     UnknownClip(String),
     #[error("unknown track `{0}`")]
     UnknownTrack(String),
+    #[error("unknown timeline `{0}`")]
+    UnknownTimeline(String),
+    #[error("unknown marker `{0}`")]
+    UnknownMarker(String),
     #[error("clip `{clip}` is a {from_type} clip and cannot move to a {to_type} track")]
     IncompatibleTrackType {
         clip: String,
@@ -152,6 +201,11 @@ pub struct Receipt {
     pub created_clip_ids: Vec<String>,
     pub removed_clip_ids: Vec<String>,
     pub changed_clip_ids: Vec<String>,
+    pub created_timeline_ids: Vec<String>,
+    pub changed_timeline_ids: Vec<String>,
+    pub created_marker_ids: Vec<String>,
+    pub changed_marker_ids: Vec<String>,
+    pub removed_marker_ids: Vec<String>,
     pub created_track_ids: Vec<String>,
     pub removed_track_ids: Vec<String>,
     pub changed_track_ids: Vec<String>,
@@ -166,6 +220,8 @@ impl Receipt {
         self.created_clip_ids.is_empty()
             && self.removed_clip_ids.is_empty()
             && self.changed_clip_ids.is_empty()
+            && self.created_timeline_ids.is_empty()
+            && self.changed_timeline_ids.is_empty()
             && self.created_track_ids.is_empty()
             && self.removed_track_ids.is_empty()
             && self.changed_track_ids.is_empty()
@@ -183,6 +239,11 @@ impl Receipt {
             &mut self.created_clip_ids,
             &mut self.removed_clip_ids,
             &mut self.changed_clip_ids,
+            &mut self.created_timeline_ids,
+            &mut self.changed_timeline_ids,
+            &mut self.created_marker_ids,
+            &mut self.changed_marker_ids,
+            &mut self.removed_marker_ids,
             &mut self.created_track_ids,
             &mut self.removed_track_ids,
             &mut self.changed_track_ids,
@@ -239,6 +300,23 @@ impl EditSession {
     /// Resolve, validate, and plan touch nothing; only commit writes. A refusal
     /// therefore leaves the project byte-identical, and a no-op leaves no journal entry.
     pub fn apply(&mut self, command: EditCommand) -> Result<Receipt, RefusalReason> {
+        // Two commands act on the project rather than on a timeline, so they are
+        // resolved before the active timeline is even looked up.
+        if let Some(plan) = self.plan_project_command(&command)? {
+            let mut plan = plan;
+            plan.receipt.dedupe();
+            let receipt = plan.receipt.clone();
+            if receipt.is_no_op() {
+                return Ok(receipt);
+            }
+            self.journal.record(JournalEntry {
+                command,
+                receipt: receipt.clone(),
+                patch: plan.patch,
+            });
+            return Ok(receipt);
+        }
+
         let index = self.active_timeline_index()?;
         let timeline = &mut self.project.timelines[index];
 
@@ -257,11 +335,88 @@ impl EditSession {
         Ok(receipt)
     }
 
+    /// Commands that mutate the project itself. Returns `None` for anything else.
+    fn plan_project_command(
+        &mut self,
+        command: &EditCommand,
+    ) -> Result<Option<Plan>, RefusalReason> {
+        match command {
+            EditCommand::CreateTimeline {
+                name,
+                fps,
+                width,
+                height,
+            } => {
+                if *fps <= 0 || *width <= 1 || *height <= 1 {
+                    return Err(RefusalReason::Invalid(format!(
+                        "invalid timeline settings: fps {fps}, {width}x{height}"
+                    )));
+                }
+                let id = uuid::Uuid::new_v4().to_string();
+                let timeline = Timeline {
+                    id: Some(id.clone()),
+                    name: name.clone().unwrap_or_else(|| {
+                        format!("Timeline {}", self.project.timelines.len() + 1)
+                    }),
+                    fps: *fps,
+                    width: *width,
+                    height: *height,
+                    settings_configured: true,
+                    folder_id: None,
+                    tracks: Vec::new(),
+                    markers: Vec::new(),
+                    extra: Default::default(),
+                };
+                let mut patch = InversePatch::new(id.clone());
+                patch.push(patch::Undo::DeleteTimeline {
+                    timeline_id: id.clone(),
+                });
+                self.project.timelines.push(timeline);
+                Ok(Some(Plan {
+                    receipt: Receipt {
+                        created_timeline_ids: vec![id],
+                        ..Default::default()
+                    },
+                    patch,
+                }))
+            }
+            EditCommand::SetActiveTimeline { timeline_id } => {
+                if !self
+                    .project
+                    .timelines
+                    .iter()
+                    .any(|t| t.id.as_deref() == Some(timeline_id.as_str()))
+                {
+                    return Err(RefusalReason::UnknownTimeline(timeline_id.clone()));
+                }
+                if self.project.active_timeline_id.as_deref() == Some(timeline_id.as_str()) {
+                    return Ok(Some(Plan {
+                        receipt: Receipt::default(),
+                        patch: InversePatch::new(timeline_id.clone()),
+                    }));
+                }
+                let mut patch = InversePatch::new(timeline_id.clone());
+                patch.push(patch::Undo::RestoreActiveTimeline {
+                    timeline_id: self.project.active_timeline_id.clone(),
+                });
+                self.project.active_timeline_id = Some(timeline_id.clone());
+                Ok(Some(Plan {
+                    receipt: Receipt {
+                        changed_timeline_ids: vec![timeline_id.clone()],
+                        ..Default::default()
+                    },
+                    patch,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Step back one journal entry.
     pub fn undo(&mut self) -> Option<Receipt> {
-        let index = self.active_timeline_index().ok()?;
-        let timeline = &mut self.project.timelines[index];
-        self.journal.undo(timeline).map(|e| e.receipt.clone())
+        self.journal
+            .undo(&mut self.project)
+            .map(|e| e.receipt.clone())
     }
 
     /// Reapply the entry the cursor sits on.
@@ -317,6 +472,29 @@ pub(crate) fn plan_command(
         } => place::set_track_properties(timeline, track_id, properties),
         EditCommand::LinkClips { clip_ids } => place::link_clips(timeline, clip_ids, true),
         EditCommand::UnlinkClips { clip_ids } => place::link_clips(timeline, clip_ids, false),
+        EditCommand::SetTimelineSettings {
+            fps,
+            width,
+            height,
+            name,
+        } => place::set_timeline_settings(timeline, *fps, *width, *height, name.as_deref()),
+        EditCommand::AddMarker { marker } => place::add_marker(timeline, marker),
+        EditCommand::UpdateMarker { marker_id, marker } => {
+            place::update_marker(timeline, marker_id, marker)
+        }
+        EditCommand::RemoveMarkers { marker_ids } => place::remove_markers(timeline, marker_ids),
+        EditCommand::SwapClipMedia {
+            clip_ids,
+            media_ref,
+        } => place::swap_clip_media(timeline, clip_ids, media_ref),
+        EditCommand::CopyClipSettings {
+            from_clip_id,
+            to_clip_ids,
+        } => place::copy_clip_settings(timeline, from_clip_id, to_clip_ids),
+        // Handled by `EditSession::apply` before it reaches a timeline.
+        EditCommand::CreateTimeline { .. } | EditCommand::SetActiveTimeline { .. } => Err(
+            RefusalReason::Invalid("project-scoped command routed to a timeline".into()),
+        ),
     }
 }
 

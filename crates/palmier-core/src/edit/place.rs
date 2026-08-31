@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use super::MarkerInput;
 use super::link;
 use super::overwrite::{OverwriteAction, advance_trim, compute_overwrite};
 use super::patch::{InversePatch, Undo, remove_clip_anywhere, sort_all};
@@ -11,6 +12,8 @@ use super::{
     resolve_targets,
 };
 use crate::frames::FrameRange;
+use crate::marker::{MarkerStatus, TimelineMarker};
+use crate::text::Rgba;
 use crate::timeline::{Clip, ClipType, Timeline, Track};
 
 fn timeline_id(timeline: &Timeline) -> String {
@@ -929,6 +932,280 @@ pub(crate) fn link_clips(
         });
         slot.link_group_id = group.clone();
         receipt.changed_clip_ids.push(id.clone());
+    }
+    Ok(Plan { receipt, patch })
+}
+
+// -------------------------------------------------------- timeline settings
+
+pub(crate) fn set_timeline_settings(
+    timeline: &mut Timeline,
+    fps: Option<i64>,
+    width: Option<i64>,
+    height: Option<i64>,
+    name: Option<&str>,
+) -> Result<Plan, RefusalReason> {
+    if let Some(fps) = fps
+        && fps <= 0
+    {
+        return Err(RefusalReason::Invalid(format!(
+            "fps must be positive, got {fps}"
+        )));
+    }
+    for (label, value) in [("width", width), ("height", height)] {
+        if let Some(value) = value
+            && value <= 1
+        {
+            return Err(RefusalReason::Invalid(format!(
+                "{label} must be greater than 1, got {value}"
+            )));
+        }
+    }
+
+    let before = timeline.clone();
+    if let Some(fps) = fps {
+        timeline.fps = fps;
+    }
+    if let Some(width) = width {
+        timeline.width = width;
+    }
+    if let Some(height) = height {
+        timeline.height = height;
+    }
+    if let Some(name) = name {
+        timeline.name = name.to_string();
+    }
+    timeline.settings_configured = true;
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    let mut receipt = Receipt::default();
+    // Compare on settings alone: clips and markers are untouched here.
+    if (
+        before.fps,
+        before.width,
+        before.height,
+        &before.name,
+        before.settings_configured,
+    ) != (
+        timeline.fps,
+        timeline.width,
+        timeline.height,
+        &timeline.name,
+        timeline.settings_configured,
+    ) {
+        patch.push(Undo::RestoreTimelineSettings {
+            timeline: Box::new(before),
+        });
+        receipt.changed_timeline_ids.push(timeline_id(timeline));
+    }
+    Ok(Plan { receipt, patch })
+}
+
+// ------------------------------------------------------------------ markers
+
+fn marker_range(start: i64, duration: i64, label: &str) -> Result<(), RefusalReason> {
+    if start < 0 {
+        return Err(RefusalReason::NegativeFrame(label.to_string()));
+    }
+    if duration < 0 {
+        return Err(RefusalReason::Invalid(format!(
+            "marker `{label}` has negative duration {duration}"
+        )));
+    }
+    checked(label, start, duration).map(|_| ())
+}
+
+pub(crate) fn add_marker(
+    timeline: &mut Timeline,
+    input: &MarkerInput,
+) -> Result<Plan, RefusalReason> {
+    let start = input.start_frame.unwrap_or(0);
+    let duration = input.duration_frames.unwrap_or(0);
+    let name = input.name.clone().unwrap_or_default();
+    marker_range(start, duration, &name)?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let marker = TimelineMarker {
+        id: id.clone(),
+        name,
+        start_frame: start,
+        duration_frames: duration,
+        // A marker with no colour is still a marker; default to the timecode amber.
+        color: input.color.unwrap_or(Rgba::new(0.95, 0.6, 0.2, 1.0)),
+        comment: input.comment.clone().unwrap_or_default(),
+        status: if input.resolved.unwrap_or(false) {
+            MarkerStatus::Resolved
+        } else {
+            MarkerStatus::Open
+        },
+        extra: Default::default(),
+    };
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    patch.push(Undo::RestoreMarkers {
+        markers: timeline.markers.clone(),
+    });
+    timeline.markers.push(marker);
+    timeline.markers.sort_by_key(|m| m.start_frame);
+
+    Ok(Plan {
+        receipt: Receipt {
+            markers_changed: true,
+            created_marker_ids: vec![id],
+            ..Default::default()
+        },
+        patch,
+    })
+}
+
+pub(crate) fn update_marker(
+    timeline: &mut Timeline,
+    marker_id: &str,
+    input: &MarkerInput,
+) -> Result<Plan, RefusalReason> {
+    let Some(index) = timeline.markers.iter().position(|m| m.id == marker_id) else {
+        return Err(RefusalReason::UnknownMarker(marker_id.to_string()));
+    };
+    let before_all = timeline.markers.clone();
+    let before = timeline.markers[index].clone();
+
+    let start = input.start_frame.unwrap_or(before.start_frame);
+    let duration = input.duration_frames.unwrap_or(before.duration_frames);
+    marker_range(start, duration, marker_id)?;
+
+    let marker = &mut timeline.markers[index];
+    marker.start_frame = start;
+    marker.duration_frames = duration;
+    if let Some(name) = &input.name {
+        marker.name = name.clone();
+    }
+    if let Some(comment) = &input.comment {
+        marker.comment = comment.clone();
+    }
+    if let Some(color) = input.color {
+        marker.color = color;
+    }
+    if let Some(resolved) = input.resolved {
+        marker.status = if resolved {
+            MarkerStatus::Resolved
+        } else {
+            MarkerStatus::Open
+        };
+    }
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    let mut receipt = Receipt::default();
+    if timeline.markers[index] != before {
+        patch.push(Undo::RestoreMarkers {
+            markers: before_all,
+        });
+        timeline.markers.sort_by_key(|m| m.start_frame);
+        receipt.markers_changed = true;
+        receipt.changed_marker_ids.push(marker_id.to_string());
+    }
+    Ok(Plan { receipt, patch })
+}
+
+pub(crate) fn remove_markers(
+    timeline: &mut Timeline,
+    marker_ids: &[String],
+) -> Result<Plan, RefusalReason> {
+    if marker_ids.is_empty() {
+        return Err(RefusalReason::EmptyTargets);
+    }
+    for id in marker_ids {
+        if !timeline.markers.iter().any(|m| &m.id == id) {
+            return Err(RefusalReason::UnknownMarker(id.clone()));
+        }
+    }
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    patch.push(Undo::RestoreMarkers {
+        markers: timeline.markers.clone(),
+    });
+    timeline
+        .markers
+        .retain(|m| !marker_ids.iter().any(|id| id == &m.id));
+
+    Ok(Plan {
+        receipt: Receipt {
+            markers_changed: true,
+            removed_marker_ids: marker_ids.to_vec(),
+            ..Default::default()
+        },
+        patch,
+    })
+}
+
+// ------------------------------------------------------- clip media and copy
+
+pub(crate) fn swap_clip_media(
+    timeline: &mut Timeline,
+    clip_ids: &[String],
+    media_ref: &str,
+) -> Result<Plan, RefusalReason> {
+    if media_ref.is_empty() {
+        return Err(RefusalReason::Invalid("mediaRef is empty".into()));
+    }
+    let targets = resolve_targets(timeline, clip_ids, false)?;
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    let mut receipt = Receipt::default();
+    for id in &targets {
+        let Some(slot) = clip_slot(timeline, id) else {
+            continue;
+        };
+        if slot.media_ref == media_ref {
+            continue;
+        }
+        patch.push(Undo::RestoreClipState {
+            clip: Box::new(slot.clone()),
+        });
+        slot.media_ref = media_ref.to_string();
+        receipt.changed_clip_ids.push(id.clone());
+    }
+    Ok(Plan { receipt, patch })
+}
+
+pub(crate) fn copy_clip_settings(
+    timeline: &mut Timeline,
+    from_clip_id: &str,
+    to_clip_ids: &[String],
+) -> Result<Plan, RefusalReason> {
+    let source = find_clip(timeline, from_clip_id)
+        .ok_or_else(|| RefusalReason::UnknownClip(from_clip_id.to_string()))?
+        .clone();
+    let targets = resolve_targets(timeline, to_clip_ids, false)?;
+
+    let mut patch = InversePatch::new(timeline_id(timeline));
+    let mut receipt = Receipt::default();
+    for id in &targets {
+        // Copying a clip onto itself is a no-op, not an error.
+        if id == from_clip_id {
+            continue;
+        }
+        let Some(slot) = clip_slot(timeline, id) else {
+            continue;
+        };
+        let before = slot.clone();
+        // Look, not timing: position, duration, trims, and identity stay put.
+        slot.opacity = source.opacity;
+        slot.volume = source.volume;
+        slot.speed = source.speed;
+        slot.fade_in_frames = source.fade_in_frames;
+        slot.fade_out_frames = source.fade_out_frames;
+        slot.transform = source.transform.clone();
+        slot.crop = source.crop.clone();
+        slot.edge_rounding = source.edge_rounding;
+        slot.edge_softness = source.edge_softness;
+        slot.blend_mode = source.blend_mode;
+        slot.effects = source.effects.clone();
+        if *slot != before {
+            patch.push(Undo::RestoreClipState {
+                clip: Box::new(before),
+            });
+            receipt.changed_clip_ids.push(id.clone());
+        }
     }
     Ok(Plan { receipt, patch })
 }

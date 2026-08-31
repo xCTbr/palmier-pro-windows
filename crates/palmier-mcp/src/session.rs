@@ -184,6 +184,21 @@ impl Session {
         self.edit.as_mut().ok_or(SessionError::NoProject)
     }
 
+    /// The timeline every tool reads and edits.
+    ///
+    /// Reads used to take `timelines[0]` while edits went through the session's active
+    /// timeline — invisible while a project had one timeline, wrong the moment it had two.
+    pub fn active_timeline(&self) -> Result<&palmier_core::Timeline, SessionError> {
+        let project = self.project()?;
+        let active = project.active_timeline_id.as_deref();
+        project
+            .timelines
+            .iter()
+            .find(|t| active.is_none() || t.id.as_deref() == active)
+            .or_else(|| project.timelines.first())
+            .ok_or(SessionError::NoProject)
+    }
+
     pub fn project(&self) -> Result<&ProjectFile, SessionError> {
         self.edit
             .as_ref()

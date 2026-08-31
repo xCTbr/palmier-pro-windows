@@ -176,6 +176,11 @@ pub fn receipt(r: &Receipt) -> Value {
     let mut out = Map::new();
     out.insert("status".into(), json!("applied"));
     for (key, ids) in [
+        ("createdTimelineIds", &r.created_timeline_ids),
+        ("changedTimelineIds", &r.changed_timeline_ids),
+        ("createdMarkerIds", &r.created_marker_ids),
+        ("changedMarkerIds", &r.changed_marker_ids),
+        ("removedMarkerIds", &r.removed_marker_ids),
         ("createdClipIds", &r.created_clip_ids),
         ("removedClipIds", &r.removed_clip_ids),
         ("changedClipIds", &r.changed_clip_ids),

@@ -4,6 +4,7 @@
 //! not commit. See specs/002-edit-commands/research.md Q1.
 
 use crate::marker::TimelineMarker;
+use crate::project::ProjectFile;
 use crate::timeline::{Clip, Timeline, Track};
 
 /// One reversible change to a timeline.
@@ -28,6 +29,20 @@ pub enum Undo {
     RestoreTrackState { track_id: String, track: Box<Track> },
     /// The marker list before the command.
     RestoreMarkers { markers: Vec<TimelineMarker> },
+    /// Fields of the timeline itself — fps, size, name — before the command.
+    RestoreTimelineSettings { timeline: Box<Timeline> },
+
+    // Project-scoped steps. A command may add a timeline or change which one is
+    // active, so the patch has to reach above a single timeline to reverse it.
+    /// A timeline that did not exist before.
+    DeleteTimeline { timeline_id: String },
+    /// A timeline that existed before, at its index.
+    RestoreTimeline {
+        index: usize,
+        timeline: Box<Timeline>,
+    },
+    /// Which timeline was active before.
+    RestoreActiveTimeline { timeline_id: Option<String> },
 }
 
 /// Everything needed to reverse one command, in the order it must be undone.
@@ -56,13 +71,44 @@ impl InversePatch {
     /// Reverse the command this patch describes. Steps are applied in reverse order so
     /// later effects unwind before earlier ones.
     ///
+    /// Takes the whole project, because a command may add a timeline or change which is
+    /// active — effects a timeline-scoped patch could not undo.
+    ///
     /// Crate-private: `EditSession` is the only public way to mutate a project
     /// (constitution principle I), so a caller cannot apply a patch behind its back.
-    pub(crate) fn apply(&self, timeline: &mut Timeline) {
+    pub(crate) fn apply(&self, project: &mut ProjectFile) {
         for step in self.steps.iter().rev() {
-            apply_step(timeline, step);
+            match step {
+                Undo::DeleteTimeline { timeline_id } => {
+                    project
+                        .timelines
+                        .retain(|t| t.id.as_deref() != Some(timeline_id.as_str()));
+                }
+                Undo::RestoreTimeline { index, timeline } => {
+                    let at = (*index).min(project.timelines.len());
+                    project.timelines.insert(at, (**timeline).clone());
+                }
+                Undo::RestoreActiveTimeline { timeline_id } => {
+                    project.active_timeline_id = timeline_id.clone();
+                }
+                step => {
+                    if let Some(timeline) = project
+                        .timelines
+                        .iter_mut()
+                        .find(|t| t.id.as_deref() == Some(self.timeline_id.as_str()))
+                    {
+                        apply_step(timeline, step);
+                    }
+                }
+            }
         }
-        sort_all(timeline);
+        if let Some(timeline) = project
+            .timelines
+            .iter_mut()
+            .find(|t| t.id.as_deref() == Some(self.timeline_id.as_str()))
+        {
+            sort_all(timeline);
+        }
     }
 }
 
@@ -127,6 +173,17 @@ fn apply_step(timeline: &mut Timeline, step: &Undo) {
         Undo::RestoreMarkers { markers } => {
             timeline.markers = markers.clone();
         }
+        Undo::RestoreTimelineSettings { timeline: before } => {
+            let tracks = std::mem::take(&mut timeline.tracks);
+            let markers = std::mem::take(&mut timeline.markers);
+            *timeline = (**before).clone();
+            timeline.tracks = tracks;
+            timeline.markers = markers;
+        }
+        // Handled by `InversePatch::apply`, which owns the project.
+        Undo::DeleteTimeline { .. }
+        | Undo::RestoreTimeline { .. }
+        | Undo::RestoreActiveTimeline { .. } => {}
     }
 }
 

@@ -342,6 +342,105 @@ pub struct ExportProjectArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ManageClipLinksArgs {
+    /// `link` or `unlink`.
+    pub action: String,
+    /// Clips to act on. `link` needs at least two; `unlink` expands to whole groups.
+    pub clip_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageMarkersArgs {
+    /// `add`, `update`, or `remove`.
+    pub action: String,
+    /// Marker to act on, for `update` and `remove`.
+    #[serde(default)]
+    pub marker_id: Option<String>,
+    /// Several markers to remove at once.
+    #[serde(default)]
+    pub marker_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Where the marker sits. A point marker has no duration.
+    #[serde(default)]
+    pub start_frame: Option<i64>,
+    /// Length in frames. 0, or absent, makes it a point marker.
+    #[serde(default)]
+    pub duration_frames: Option<i64>,
+    /// Mark a review note as dealt with.
+    #[serde(default)]
+    pub resolved: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetProjectSettingsArgs {
+    #[serde(default)]
+    pub fps: Option<i64>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTimelineArgs {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub fps: Option<i64>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetActiveTimelineArgs {
+    pub timeline_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SwapClipMediaArgs {
+    pub clip_ids: Vec<String>,
+    /// The asset the clips should point at instead, from get_media.
+    pub media_ref: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyClipSettingsArgs {
+    /// The clip whose look is copied.
+    pub from_clip_id: String,
+    /// Clips that take on that look. Timing and identity are never copied.
+    pub to_clip_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectMediaArgs {
+    pub media_ref: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureFrameArgs {
+    /// Project frame to capture.
+    pub frame: i64,
+    /// Where to write the PNG.
+    pub output: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UndoArgs {
     /// When true, reapply the change that was last undone instead of undoing.
     #[serde(default)]
@@ -448,11 +547,8 @@ omitted. `gaps` lists a track's empty spans; no `gaps` key means it is contiguou
         Parameters(args): Parameters<GetTimelineArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
-        let Ok(project) = session.project() else {
+        let Ok(timeline) = session.active_timeline() else {
             return refused(NO_PROJECT);
-        };
-        let Some(timeline) = project.timelines.first() else {
-            return refused("the project has no timelines");
         };
 
         let window = match (args.start_frame, args.end_frame) {
@@ -479,10 +575,13 @@ omitted. `gaps` lists a track's empty spans; no `gaps` key means it is contiguou
         let mut session = self.session.lock().await;
         let command = {
             let edit = session.edit().map_err(|e| invalid(e.to_string()))?;
+            let active = edit.project.active_timeline_id.clone();
             let timeline = edit
                 .project
                 .timelines
-                .first()
+                .iter()
+                .find(|t| active.is_none() || t.id == active)
+                .or_else(|| edit.project.timelines.first())
                 .ok_or_else(|| invalid("the project has no timelines"))?;
             match args.action.as_str() {
                 "add" => {
@@ -530,10 +629,13 @@ splitting, or removing to make room. Set `insert` to push later clips aside inst
         }
         let command = {
             let edit = session.edit().map_err(|e| invalid(e.to_string()))?;
+            let active = edit.project.active_timeline_id.clone();
             let timeline = edit
                 .project
                 .timelines
-                .first()
+                .iter()
+                .find(|t| active.is_none() || t.id == active)
+                .or_else(|| edit.project.timelines.first())
                 .ok_or_else(|| invalid("the project has no timelines"))?;
 
             let first = &args.entries[0];
@@ -580,10 +682,13 @@ destination is out of bounds, the whole call is refused and nothing moves."
         let mut session = self.session.lock().await;
         let command = {
             let edit = session.edit().map_err(|e| invalid(e.to_string()))?;
+            let active = edit.project.active_timeline_id.clone();
             let timeline = edit
                 .project
                 .timelines
-                .first()
+                .iter()
+                .find(|t| active.is_none() || t.id == active)
+                .or_else(|| edit.project.timelines.first())
                 .ok_or_else(|| invalid("the project has no timelines"))?;
             let mut moves = Vec::with_capacity(args.moves.len());
             for entry in &args.moves {
@@ -631,10 +736,13 @@ right-hand halves become their own link group."
         let mut session = self.session.lock().await;
         let command = {
             let edit = session.edit().map_err(|e| invalid(e.to_string()))?;
+            let active = edit.project.active_timeline_id.clone();
             let timeline = edit
                 .project
                 .timelines
-                .first()
+                .iter()
+                .find(|t| active.is_none() || t.id == active)
+                .or_else(|| edit.project.timelines.first())
                 .ok_or_else(|| invalid("the project has no timelines"))?;
             let mut points = Vec::with_capacity(args.points.len());
             for entry in &args.points {
@@ -733,11 +841,8 @@ default, origin top-left, one cell per 0.1."
         Parameters(args): Parameters<InspectTimelineArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
-        let Ok(project) = session.project() else {
+        let Ok(timeline) = session.active_timeline().cloned() else {
             return refused(NO_PROJECT);
-        };
-        let Some(timeline) = project.timelines.first().cloned() else {
-            return refused("the project has no timelines");
         };
 
         let start = args.start_frame.unwrap_or(0);
@@ -906,11 +1011,8 @@ before you cut with them."
         Parameters(args): Parameters<DetectSilenceArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
-        let Ok(project) = session.project() else {
+        let Ok(timeline) = session.active_timeline() else {
             return refused(NO_PROJECT);
-        };
-        let Some(timeline) = project.timelines.first() else {
-            return refused("the project has no timelines");
         };
         let fps = timeline.fps.max(1);
 
@@ -977,11 +1079,8 @@ disk is reported in `missingMedia` rather than silently omitted."
         Parameters(args): Parameters<ExportProjectArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let session = self.session.lock().await;
-        let Ok(project) = session.project() else {
+        let Ok(timeline) = session.active_timeline().cloned() else {
             return refused(NO_PROJECT);
-        };
-        let Some(timeline) = project.timelines.first().cloned() else {
-            return refused("the project has no timelines");
         };
 
         let mut options = palmier_media::RenderOptions::new(&args.output);
@@ -1011,6 +1110,252 @@ disk is reported in `missingMedia` rather than silently omitted."
                 }
                 ok(out)
             }
+            Err(error) => refused(error.to_string()),
+        }
+    }
+
+    #[tool(
+        description = "Link or unlink clips so they behave as one. A linked video and \
+audio pair move, trim, split, and delete together, keeping their relative offset — this \
+is what stops dialogue drifting out of sync when you rearrange a cut. `unlink` expands \
+to the whole group, so unlinking any member unlinks all of them."
+    )]
+    async fn manage_clip_links(
+        &self,
+        Parameters(args): Parameters<ManageClipLinksArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = match args.action.as_str() {
+            "link" => EditCommand::LinkClips {
+                clip_ids: args.clip_ids,
+            },
+            "unlink" => EditCommand::UnlinkClips {
+                clip_ids: args.clip_ids,
+            },
+            other => return refused(format!("unknown action `{other}`; expected link or unlink")),
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Add, update, or remove a marker — a persistent note on the \
+timeline. A point marker has durationFrames 0; a range marker spans \
+[startFrame, startFrame + durationFrames). Markers move with the content they annotate \
+when a ripple edit shifts it, so a note stays on the shot it was about."
+    )]
+    async fn manage_markers(
+        &self,
+        Parameters(args): Parameters<ManageMarkersArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let input = palmier_core::edit::MarkerInput {
+            name: args.name,
+            comment: args.comment,
+            start_frame: args.start_frame,
+            duration_frames: args.duration_frames,
+            color: None,
+            resolved: args.resolved,
+        };
+        let command = match args.action.as_str() {
+            "add" => EditCommand::AddMarker {
+                marker: Box::new(input),
+            },
+            "update" => match args.marker_id {
+                Some(marker_id) => EditCommand::UpdateMarker {
+                    marker_id,
+                    marker: Box::new(input),
+                },
+                None => return refused("`update` needs a markerId"),
+            },
+            "remove" => {
+                let ids = args
+                    .marker_ids
+                    .or_else(|| args.marker_id.map(|id| vec![id]))
+                    .unwrap_or_default();
+                if ids.is_empty() {
+                    return refused("`remove` needs a markerId or markerIds");
+                }
+                EditCommand::RemoveMarkers { marker_ids: ids }
+            }
+            other => {
+                return refused(format!(
+                    "unknown action `{other}`; expected add, update, or remove"
+                ));
+            }
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Change the active timeline's frame rate, canvas size, or name. \
+Frame positions are not rescaled: changing fps changes how long the existing frame \
+counts last, it does not retime the cut."
+    )]
+    async fn set_project_settings(
+        &self,
+        Parameters(args): Parameters<SetProjectSettingsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = EditCommand::SetTimelineSettings {
+            fps: args.fps,
+            width: args.width,
+            height: args.height,
+            name: args.name,
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Add another timeline to the project. A project can hold several \
+— a main cut and alternates, say. The new timeline starts empty and does not become \
+active; use set_active_timeline for that."
+    )]
+    async fn create_timeline(
+        &self,
+        Parameters(args): Parameters<CreateTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = EditCommand::CreateTimeline {
+            name: args.name,
+            fps: args.fps.unwrap_or(30),
+            width: args.width.unwrap_or(1920),
+            height: args.height.unwrap_or(1080),
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Switch which timeline every other tool reads and edits. \
+get_timeline reports the one that is active."
+    )]
+    async fn set_active_timeline(
+        &self,
+        Parameters(args): Parameters<SetActiveTimelineArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = EditCommand::SetActiveTimeline {
+            timeline_id: args.timeline_id,
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Point clips at a different media asset, keeping their position, \
+duration, trims, and look. Use it to swap a proxy for the real footage, or one take for \
+another of the same length."
+    )]
+    async fn swap_clip_media(
+        &self,
+        Parameters(args): Parameters<SwapClipMediaArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = EditCommand::SwapClipMedia {
+            clip_ids: args.clip_ids,
+            media_ref: args.media_ref,
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Copy one clip's look onto others — opacity, volume, speed, fades, \
+transform, crop, edges, blend mode, and effects. Position, duration, trims, and \
+identity are never copied, so the targets keep their place in the cut."
+    )]
+    async fn copy_clip_settings(
+        &self,
+        Parameters(args): Parameters<CopyClipSettingsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        let command = EditCommand::CopyClipSettings {
+            from_clip_id: args.from_clip_id,
+            to_clip_ids: args.to_clip_ids,
+        };
+        self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Describe one media asset in detail: duration, resolution, frame \
+rate, whether it carries audio, and where its file is. get_media lists everything; this \
+answers questions about one of them."
+    )]
+    async fn inspect_media(
+        &self,
+        Parameters(args): Parameters<InspectMediaArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        if !session.is_open() {
+            return refused(NO_PROJECT);
+        }
+        let dir = session.package_dir();
+        let Some(entry) = session
+            .manifest()
+            .entries
+            .iter()
+            .find(|e| e.id == args.media_ref)
+        else {
+            return refused(format!(
+                "`{}` is not in this project's media",
+                args.media_ref
+            ));
+        };
+        let path = entry.source.resolve(dir.as_deref());
+        let resolved = path.as_ref().is_some_and(|p| p.is_file());
+
+        let mut out = json!({
+            "mediaRef": entry.id,
+            "name": entry.name,
+            "durationSeconds": entry.duration,
+            "resolved": resolved,
+            "path": path.as_ref().map(|p| p.display().to_string()),
+        });
+        // Probe live rather than trusting the manifest: the file may have changed.
+        if let Some(path) = path.filter(|p| p.is_file())
+            && let Ok(info) = palmier_media::probe(&path)
+        {
+            out["width"] = json!(info.width);
+            out["height"] = json!(info.height);
+            out["fps"] = json!(info.fps);
+            out["hasAudio"] = json!(info.has_audio);
+            out["hasVideo"] = json!(info.has_video);
+            out["durationSeconds"] = json!(info.duration_seconds);
+        }
+        ok(out)
+    }
+
+    #[tool(
+        description = "Write one composited frame of the timeline to a PNG file. Unlike \
+inspect_timeline, which hands you the picture to look at, this saves it — for a \
+thumbnail, a still, or a frame to bring back in as media."
+    )]
+    async fn capture_frame(
+        &self,
+        Parameters(args): Parameters<CaptureFrameArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        let Ok(timeline) = session.active_timeline().cloned() else {
+            return refused(NO_PROJECT);
+        };
+        if args.frame < 0 {
+            return refused(format!(
+                "frame {} is before the start of the timeline",
+                args.frame
+            ));
+        }
+        let output = PathBuf::from(&args.output);
+        let resolve = session.resolver();
+        // Full canvas and no grid: this is a still to keep, not a diagram to read.
+        let options = palmier_media::FrameOptions {
+            grid: false,
+            max_width: 0,
+        };
+        match palmier_media::render_frame(&timeline, &resolve, args.frame, &output, options) {
+            Ok(()) => ok(json!({
+                "status": "captured",
+                "output": output.display().to_string(),
+                "frame": args.frame,
+                "width": timeline.width,
+                "height": timeline.height,
+            })),
             Err(error) => refused(error.to_string()),
         }
     }

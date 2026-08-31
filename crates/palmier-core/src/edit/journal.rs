@@ -2,7 +2,7 @@
 
 use super::patch::InversePatch;
 use super::{EditCommand, Receipt};
-use crate::timeline::Timeline;
+use crate::project::ProjectFile;
 
 /// One user intent that actually changed something.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,13 +59,13 @@ impl Journal {
     ///
     /// Crate-private for the same reason `InversePatch::apply` is: `EditSession::undo`
     /// is the only public entry point.
-    pub(crate) fn undo(&mut self, timeline: &mut Timeline) -> Option<&JournalEntry> {
+    pub(crate) fn undo(&mut self, project: &mut ProjectFile) -> Option<&JournalEntry> {
         if !self.can_undo() {
             return None;
         }
         self.cursor -= 1;
         let entry = &self.entries[self.cursor];
-        entry.patch.apply(timeline);
+        entry.patch.apply(project);
         Some(entry)
     }
 
