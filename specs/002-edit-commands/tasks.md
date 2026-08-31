@@ -42,4 +42,4 @@ Tests are mandatory (constitution principle V) and precede the code they cover.
 
 - [X] T023 Verify SC-006 by searching for any mutation path outside `apply`
 - [X] T024 Performance check: a ripple across 10,000 clips resolves under 50 ms
-- [ ] T025 `cargo fmt --check`, `cargo clippy -D warnings`, full suite, then push and confirm CI green on Linux and Windows
+- [X] T025 fmt, clippy, full suite, and CI green on Linux, Windows, and macOS — run 33344084970
