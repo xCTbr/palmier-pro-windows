@@ -57,3 +57,41 @@ fn bench_large_project() {
         "SC-005: {clips} clips took {elapsed:?}, budget is 500ms"
     );
 }
+
+/// A ripple across a large timeline must stay interactive.
+#[test]
+#[ignore = "performance gate; run in release with --ignored"]
+fn bench_large_ripple() {
+    use palmier_core::edit::{EditCommand, EditSession};
+    use std::time::Instant;
+
+    let mut clips = String::new();
+    for i in 0..10_000 {
+        if i > 0 {
+            clips.push(',');
+        }
+        clips.push_str(&format!(
+            r#"{{"id":"c{i}","mediaRef":"m","startFrame":{},"durationFrames":30}}"#,
+            i * 30
+        ));
+    }
+    let json = format!(
+        r#"{{"timelines":[{{"id":"tl","fps":30,"width":1920,"height":1080,
+           "tracks":[{{"id":"v1","type":"video","clips":[{clips}]}}]}}],"activeTimelineId":"tl"}}"#
+    );
+    let mut session = EditSession::new(ProjectFile::decode(json.as_bytes()).unwrap());
+
+    let start = Instant::now();
+    session
+        .apply(EditCommand::RippleDeleteRanges {
+            ranges: vec![(0, 3000)],
+        })
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    println!("rippled 10,000 clips in {elapsed:?}");
+    assert!(
+        elapsed.as_millis() < 50,
+        "ripple took {elapsed:?}, budget is 50ms"
+    );
+}

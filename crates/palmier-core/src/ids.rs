@@ -14,6 +14,10 @@ fn fill(slot: &mut Option<String>) {
 }
 
 /// Fill every absent id in the project with a fresh UUID.
+///
+/// The one named exception to constitution principle I. This is not an edit: it runs at
+/// the load boundary, before the project is editable, and only writes ids that were
+/// absent. Nothing else in the crate may mutate a project outside `EditSession::apply`.
 pub fn materialize_ids(project: &mut ProjectFile) {
     for timeline in &mut project.timelines {
         fill(&mut timeline.id);

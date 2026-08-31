@@ -5,6 +5,7 @@
 //! `specs/001-project-model/research.md`, and that audit is authoritative.
 
 pub mod codec;
+pub mod edit;
 pub mod effect;
 pub mod frames;
 pub mod ids;
