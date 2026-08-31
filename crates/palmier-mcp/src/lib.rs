@@ -1499,7 +1499,14 @@ exhausted quota or a passing error."
             };
             let media_ref = uuid::Uuid::new_v4().to_string();
             let entry = session::entry_for(media_ref.clone(), &path, &info, Some(&package));
-            session.lock().await.add_media(entry);
+            {
+                let mut session = session.lock().await;
+                session.add_media(entry);
+                // The bytes are already on disk; the manifest must not lag behind them.
+                if let Err(error) = session.save_manifest() {
+                    return jobs.fail(&id, error.to_string()).await;
+                }
+            }
 
             jobs.succeed(
                 &id,

@@ -21,6 +21,11 @@ pub struct ResolvedMedia {
     pub path: PathBuf,
     pub has_audio: bool,
     pub has_video: bool,
+    /// A single frame — a photograph rather than footage.
+    ///
+    /// A still has to be looped before it is trimmed: `trim` over a one-frame stream
+    /// yields nothing, and the clip renders black without a word of complaint.
+    pub is_still: bool,
 }
 
 impl ResolvedMedia {
@@ -29,6 +34,17 @@ impl ResolvedMedia {
             path: path.into(),
             has_audio,
             has_video,
+            is_still: false,
+        }
+    }
+
+    /// A photograph: one frame, looped for the length of whatever clip uses it.
+    pub fn still(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            has_audio: false,
+            has_video: true,
+            is_still: true,
         }
     }
 }
@@ -130,9 +146,16 @@ pub fn build_with(
 
             if visual && !track.muted {
                 let label = format!("v{}", video_labels.len());
-                let mut chain = format!(
-                    "[{index}:v]trim=start={in_start}:end={in_end},setpts=PTS-STARTPTS+{at}/TB"
-                );
+                let mut chain = format!("[{index}:v]");
+                if media.is_still {
+                    // One frame, repeated for as long as the clip lasts. Trimming into
+                    // the source makes no sense for a photograph, so the span starts at 0.
+                    let span = seconds(clip.duration_frames, fps);
+                    chain.push_str(&format!("loop=loop=-1:size=1,trim=start=0:end={span},"));
+                } else {
+                    chain.push_str(&format!("trim=start={in_start}:end={in_end},"));
+                }
+                chain.push_str(&format!("setpts=PTS-STARTPTS+{at}/TB"));
                 if clip.speed != 1.0 && clip.speed > 0.0 {
                     chain.push_str(&format!(",setpts={:.6}*PTS", 1.0 / clip.speed));
                 }

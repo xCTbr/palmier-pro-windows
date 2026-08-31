@@ -108,6 +108,29 @@ impl Session {
         self.dirty = true;
     }
 
+    /// Write `media.json` without touching the timeline.
+    ///
+    /// A generated image is already on disk by the time it reaches the manifest, so
+    /// leaving the entry in memory would orphan the file if the session ended here —
+    /// half the effect persistent and half not. The timeline is a different matter: it
+    /// is only written when asked.
+    pub fn save_manifest(&self) -> Result<(), SessionError> {
+        let Some(path) = self.manifest_path() else {
+            return Ok(());
+        };
+        let object = palmier_core::codec::ToObject::to_object(&self.manifest);
+        let bytes = serde_json::to_vec_pretty(&serde_json::Value::Object(object)).map_err(|e| {
+            SessionError::Write {
+                path: path.display().to_string(),
+                source: std::io::Error::other(e),
+            }
+        })?;
+        std::fs::write(&path, bytes).map_err(|source| SessionError::Write {
+            path: path.display().to_string(),
+            source,
+        })
+    }
+
     /// Resolve a `mediaRef` for the render graph. Probes lazily, because the manifest's
     /// `hasAudio` is optional and an older project may not carry it.
     pub fn resolver(&self) -> impl Fn(&str) -> Option<ResolvedMedia> + use<> {
@@ -124,12 +147,13 @@ impl Session {
             if !path.is_file() {
                 return None;
             }
-            match has_audio {
-                Some(known) => Some(ResolvedMedia::new(path, *known, true)),
-                None => palmier_media::probe(&path)
-                    .ok()
-                    .map(|info| ResolvedMedia::new(path, info.has_audio, info.has_video)),
-            }
+            // Probe regardless of what the manifest remembers: only the file itself says
+            // whether it is a photograph, and a still has to be looped to render at all.
+            let info = palmier_media::probe(&path).ok()?;
+            let mut media =
+                ResolvedMedia::new(path, has_audio.unwrap_or(info.has_audio), info.has_video);
+            media.is_still = info.is_still;
+            Some(media)
         }
     }
 

@@ -16,6 +16,8 @@ pub struct MediaInfo {
     pub fps: Option<f64>,
     pub has_audio: bool,
     pub has_video: bool,
+    /// A photograph rather than footage: one frame, no meaningful duration.
+    pub is_still: bool,
 }
 
 impl MediaInfo {
@@ -50,6 +52,8 @@ struct Stream {
     height: Option<i64>,
     #[serde(default)]
     r_frame_rate: Option<String>,
+    #[serde(default)]
+    codec_name: Option<String>,
 }
 
 /// `30000/1001` and friends. Returns `None` rather than a poisoned rate.
@@ -99,18 +103,36 @@ pub fn probe(path: &Path) -> Result<MediaInfo, MediaError> {
             message: format!("unreadable output: {e}"),
         })?;
 
+    let video = parsed.streams.iter().find(|s| s.codec_type == "video");
+
+    // What tells a photograph from footage is the codec, not the length: a JPEG reports
+    // either nothing or a token 0.04s, and neither is a duration anyone meant.
+    let still_codecs = ["mjpeg", "png", "bmp", "gif", "webp", "tiff"];
+    let is_still = video
+        .and_then(|s| s.codec_name.as_deref())
+        .is_some_and(|codec| still_codecs.contains(&codec));
+
     let duration_seconds = parsed
         .format
         .duration
         .as_deref()
         .and_then(|d| d.parse::<f64>().ok())
-        .filter(|d| d.is_finite() && *d >= 0.0)
-        .ok_or_else(|| {
-            MediaError::Unsupported(format!("{} has no readable duration", path.display()))
-        })?;
+        .filter(|d| d.is_finite() && *d >= 0.0);
 
-    let video = parsed.streams.iter().find(|s| s.codec_type == "video");
+    // A still has no duration to read, and demanding one refused every photograph.
+    let duration_seconds = match (duration_seconds, is_still) {
+        (Some(duration), _) => duration,
+        (None, true) => 0.0,
+        (None, false) => {
+            return Err(MediaError::Unsupported(format!(
+                "{} has no readable duration",
+                path.display()
+            )));
+        }
+    };
+
     Ok(MediaInfo {
+        is_still,
         duration_seconds,
         width: video.and_then(|s| s.width),
         height: video.and_then(|s| s.height),

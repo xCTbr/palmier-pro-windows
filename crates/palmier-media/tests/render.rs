@@ -361,3 +361,123 @@ fn a_frame_past_the_end_is_black_not_an_error() {
     .expect("a frame past the end must render black, not fail");
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }
+
+/// A still is one frame, and `trim` over a one-frame stream yields nothing — so a
+/// photograph on the timeline rendered black, silently, with ffmpeg exiting zero.
+/// It has to be looped before it is trimmed.
+#[test]
+fn a_still_image_renders_instead_of_going_black() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let dir = workdir("still");
+    // A mid-grey photograph, so "did it render" is a question about luminance.
+    let photo = dir.join("photo.jpg");
+    let out = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=320x240",
+            "-frames:v",
+            "1",
+        ])
+        .arg(&photo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let info = probe(&photo).expect("a JPEG must probe");
+    assert!(
+        info.is_still,
+        "a JPEG must be recognised as a still, not as footage"
+    );
+
+    let json = r#"{"timelines":[{"id":"t","fps":30,"width":320,"height":240,
+      "tracks":[{"id":"v","type":"video","clips":[
+        {"id":"c","mediaRef":"P","mediaType":"image","startFrame":0,"durationFrames":90}]}]}]}"#;
+    let resolve = |_: &str| Some(ResolvedMedia::still(photo.clone()));
+    let output = dir.join("out.mp4");
+    render(&timeline_from(json), &resolve, &RenderOptions::new(&output)).expect("render");
+
+    // Sampled across the whole clip, because a still that only survives its first frame
+    // is the same bug wearing a different mask.
+    for at in [0.5, 1.5, 2.5] {
+        let frame = frame_signature(&output, at);
+        let mean: f64 = frame.iter().map(|b| *b as f64).sum::<f64>() / frame.len() as f64;
+        assert!(
+            mean > 40.0,
+            "the still is black at {at}s, mean luminance {mean}"
+        );
+    }
+}
+
+#[test]
+fn the_graph_loops_a_still_and_does_not_trim_into_it() {
+    let resolve = |_: &str| Some(ResolvedMedia::still("/photo.jpg"));
+    let json = r#"{"timelines":[{"id":"t","fps":30,"width":640,"height":360,
+      "tracks":[{"id":"v","type":"video","clips":[
+        {"id":"c","mediaRef":"P","mediaType":"image","startFrame":0,"durationFrames":60,
+         "trimStartFrame":45}]}]}]}"#;
+    let (graph, _) = build(&timeline_from(json), &resolve);
+    assert!(
+        graph.filter_complex.contains("loop=loop=-1:size=1"),
+        "{}",
+        graph.filter_complex
+    );
+    // Trimming into a photograph is meaningless: the span always starts at zero.
+    assert!(
+        graph.filter_complex.contains("trim=start=0:end=2.000000"),
+        "{}",
+        graph.filter_complex
+    );
+}
+
+/// A plain photograph carries no duration at all, and demanding one refused every image
+/// a person might drop into a project.
+#[test]
+fn a_photograph_with_no_duration_still_probes() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let dir = workdir("stillprobe");
+    for (name, args) in [
+        ("photo.jpg", "color=c=gray:s=64x64"),
+        ("photo.png", "color=c=blue:s=64x64"),
+    ] {
+        let path = dir.join(name);
+        let out = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                args,
+                "-frames:v",
+                "1",
+            ])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let info = probe(&path).unwrap_or_else(|e| panic!("{name} must probe: {e}"));
+        assert!(info.is_still, "{name} is a still");
+        assert!(info.has_video && !info.has_audio);
+        assert_eq!(
+            info.duration_seconds, 0.0,
+            "a photograph has no length of its own"
+        );
+    }
+}
