@@ -35,45 +35,61 @@ enum Command {
     },
 }
 
+/// Print a line, tolerating a closed pipe.
+///
+/// `println!` panics when stdout is gone, so piping this into `head` or `grep -q` ended
+/// in a broken-pipe panic — a crash report for someone doing something perfectly
+/// ordinary.
+macro_rules! say {
+    () => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout());
+    }};
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
 /// Double-clicking a console program on Windows runs it with no arguments and closes
 /// the window the instant it exits, so the user sees nothing at all. Say what this is
 /// and wait, rather than vanishing.
 fn greet_and_wait() -> ExitCode {
-    println!("palmier {}", env!("CARGO_PKG_VERSION"));
-    println!("An AI-native video editor you drive by talking to your coding agent.\n");
-    println!("This is a command-line program, not an installer. Run it from a terminal:\n");
+    say!("palmier {}", env!("CARGO_PKG_VERSION"));
+    say!("An AI-native video editor you drive by talking to your coding agent.\n");
+    say!("This is a command-line program, not an installer. Run it from a terminal:\n");
     if cfg!(windows) {
-        println!("    .\\palmier.exe serve        start the MCP server");
-        println!("    .\\palmier.exe inspect <path>   describe a project\n");
+        say!("    .\\palmier.exe serve        start the MCP server");
+        say!("    .\\palmier.exe inspect <path>   describe a project\n");
     } else {
-        println!("    palmier serve              start the MCP server");
-        println!("    palmier inspect <path>     describe a project\n");
+        say!("    palmier serve              start the MCP server");
+        say!("    palmier inspect <path>     describe a project\n");
     }
-    println!("Then point your agent at it:\n");
-    println!("    claude mcp add --transport http palmier http://127.0.0.1:19789/mcp\n");
+    say!("Then point your agent at it:\n");
+    say!("    claude mcp add --transport http palmier http://127.0.0.1:19789/mcp\n");
 
     match missing_tools().as_slice() {
-        [] => println!("FFmpeg: found."),
+        [] => say!("FFmpeg: found."),
         missing => {
-            println!(
+            say!(
                 "FFmpeg: NOT FOUND — {} missing from PATH.",
                 missing.join(" and ")
             );
-            println!("Rendering and media import will not work until it is installed.");
+            say!("Rendering and media import will not work until it is installed.");
             if cfg!(windows) {
-                println!("    winget install Gyan.FFmpeg");
-                println!("    (then open a new terminal so PATH updates)");
+                say!("    winget install Gyan.FFmpeg");
+                say!("    (then open a new terminal so PATH updates)");
             } else if cfg!(target_os = "macos") {
-                println!("    brew install ffmpeg");
+                say!("    brew install ffmpeg");
             } else {
-                println!("    sudo apt install ffmpeg");
+                say!("    sudo apt install ffmpeg");
             }
         }
     }
 
     // Without this the console window closes before any of the above can be read.
     if cfg!(windows) {
-        println!("\nPress Enter to close.");
+        say!("\nPress Enter to close.");
         let mut discard = String::new();
         let _ = std::io::stdin().read_line(&mut discard);
     }

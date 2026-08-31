@@ -215,3 +215,27 @@ fn the_ffmpeg_check_reports_what_is_actually_installed() {
         assert!(text.contains("NOT FOUND"), "{text}");
     }
 }
+
+/// Piping the greeting into something that stops reading must not kill the process.
+/// `println!` panics on a broken pipe, and CI caught it doing exactly that.
+#[test]
+fn a_closed_pipe_does_not_panic() {
+    use std::io::Read as _;
+    let mut child = bin()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Read one byte and drop the pipe, the way `head -1` or `grep -q` does.
+    let mut stdout = child.stdout.take().unwrap();
+    let mut byte = [0u8; 1];
+    let _ = stdout.read(&mut byte);
+    drop(stdout);
+
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "panicked on a closed pipe: {stderr}"
+    );
+}
