@@ -46,9 +46,16 @@ are ported, not after.
 
 ### 007 — The installer, finished
 
-The Tauri shell builds and bundles, but nothing has been installed and run by a person
-yet. Until someone double-clicks the `.msi` and reaches a working window, this is
-unverified — it cannot be checked from here.
+The `.msi` has now been installed and the window opens. The first real install found a
+bug no test could have: every child process got its own console window, so the status
+poll flashed two of them over the app every four seconds. Fixed by `CREATE_NO_WINDOW`
+plus caching the tool probe.
+
+Still unverified from here: rendering on Windows end to end, and whether FFmpeg has to
+be installed separately by every user. The app currently expects it on PATH and only
+says so in a status panel — that is a bad first five minutes for anyone who has never
+heard of FFmpeg. Bundling it is a licensing and installer-size decision worth making
+deliberately.
 
 **Also**: the binary is unsigned, so SmartScreen will keep warning. Signing costs money
 and needs a certificate; worth deciding rather than drifting.

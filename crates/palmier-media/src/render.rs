@@ -6,7 +6,7 @@ use std::process::Command;
 use palmier_core::timeline::Timeline;
 
 use crate::graph::{FilterGraph, ResolvedMedia, build, build_with};
-use crate::{MediaError, require_tool};
+use crate::{MediaError, quiet, require_tool};
 
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
@@ -83,7 +83,7 @@ fn run(graph: &FilterGraph, encoder: &str, options: &RenderOptions) -> Result<()
     }
 
     let mut command = Command::new("ffmpeg");
-    command.args(["-v", "error", "-nostdin", "-y"]);
+    quiet(&mut command).args(["-v", "error", "-nostdin", "-y"]);
     for input in &graph.inputs {
         command.arg("-i").arg(&input.path);
     }
@@ -183,7 +183,7 @@ pub fn render_frame(
     let label = "shown";
 
     let mut command = Command::new("ffmpeg");
-    command.args(["-v", "error", "-nostdin", "-y"]);
+    quiet(&mut command).args(["-v", "error", "-nostdin", "-y"]);
     for input in &graph.inputs {
         command.arg("-i").arg(&input.path);
     }

@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::{MediaError, require_tool};
+use crate::{MediaError, quiet, require_tool};
 
 /// A quiet span of the source, in source seconds.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,7 +83,7 @@ pub fn detect(
         ));
     }
 
-    let output = Command::new("ffmpeg")
+    let output = quiet(&mut Command::new("ffmpeg"))
         .args(["-v", "info", "-nostdin"])
         .arg("-i")
         .arg(path)

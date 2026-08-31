@@ -10,6 +10,7 @@
 //! to the browser as server-sent events.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Json;
 use axum::extract::State;
@@ -33,13 +34,25 @@ pub struct Ask {
 }
 
 /// Is the CLI on PATH at all?
+///
+/// Cached once found, because the status panel asks every few seconds and every ask is
+/// a process spawn. A negative is not cached: the user may install it while this runs.
 pub fn cli_available() -> bool {
-    std::process::Command::new(claude_binary())
+    static FOUND: AtomicBool = AtomicBool::new(false);
+    if FOUND.load(Ordering::Relaxed) {
+        return true;
+    }
+
+    let found = palmier_media::quiet(&mut std::process::Command::new(claude_binary()))
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success())
+        .is_ok_and(|status| status.success());
+    if found {
+        FOUND.store(true, Ordering::Relaxed);
+    }
+    found
 }
 
 fn claude_binary() -> &'static str {
@@ -76,6 +89,9 @@ pub async fn ask(State(ui): State<Ui>, Json(body): Json<Ask>) -> Response {
         .arg("--mcp-config")
         .arg(&config)
         .args(["--allowedTools", ALLOWED]);
+    // Same reason as `palmier_media::quiet`: no console window flashing over the app.
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
     if let Some(session) = &body.session_id {
         command.args(["--resume", session]);
     }

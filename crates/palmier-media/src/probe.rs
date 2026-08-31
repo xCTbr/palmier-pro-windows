@@ -5,7 +5,7 @@ use std::process::Command;
 
 use serde::Deserialize;
 
-use crate::{MediaError, require_tool};
+use crate::{MediaError, quiet, require_tool};
 
 /// What a probe can tell us about an asset.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,7 +77,7 @@ pub fn probe(path: &Path) -> Result<MediaInfo, MediaError> {
         });
     }
 
-    let output = Command::new("ffprobe")
+    let output = quiet(&mut Command::new("ffprobe"))
         .args([
             "-v",
             "error",

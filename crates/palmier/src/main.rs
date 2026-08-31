@@ -100,14 +100,7 @@ fn greet_and_wait() -> ExitCode {
 pub fn missing_tools() -> Vec<&'static str> {
     ["ffmpeg", "ffprobe"]
         .into_iter()
-        .filter(|tool| {
-            !std::process::Command::new(tool)
-                .arg("-version")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        })
+        .filter(|tool| palmier_media::require_tool(tool).is_err())
         .collect()
 }
 

@@ -11,9 +11,9 @@ workspace = true
 
 [dependencies]
 axum = "0.8.9"
-palmier-core = { version = "0.0.1", path = "../palmier-core" }
-palmier-gen = { version = "0.0.1", path = "../palmier-gen" }
-palmier-media = { version = "0.0.1", path = "../palmier-media" }
+palmier-core = { path = "../palmier-core" }
+palmier-gen = { path = "../palmier-gen" }
+palmier-media = { path = "../palmier-media" }
 rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "schemars", "transport-io"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
