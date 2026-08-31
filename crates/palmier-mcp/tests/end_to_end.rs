@@ -1711,3 +1711,117 @@ async fn capture_refuses_a_negative_frame() {
         .await;
     assert_eq!(out["status"], "refused");
 }
+
+// ------------------------------------------------- jobs, keys, and generation
+
+#[tokio::test]
+async fn generation_is_refused_without_keys_rather_than_hanging() {
+    let client = Client::start(EMPTY, "genkeyless").await;
+    client
+        .call(
+            "manage_project",
+            json!({ "action": "create", "path": client.dir.join("p.palmier").to_string_lossy() }),
+        )
+        .await;
+
+    // No keys are configured in the test environment, so this must say so at once.
+    let out = client
+        .call("generate_image", json!({ "prompt": "a bowl of soup" }))
+        .await;
+    assert_eq!(out["status"], "refused");
+    assert!(out["reason"].as_str().unwrap().contains("keys"), "{out}");
+}
+
+#[tokio::test]
+async fn generation_needs_somewhere_to_put_the_file() {
+    let client = Client::start(EMPTY, "genunsaved").await;
+    // Created in memory and never saved: there is no package to write into.
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+    let out = client
+        .call("generate_image", json!({ "prompt": "a cat" }))
+        .await;
+    assert_eq!(out["status"], "refused");
+    assert!(out["reason"].as_str().unwrap().contains("save"), "{out}");
+}
+
+#[tokio::test]
+async fn an_empty_prompt_is_refused() {
+    let client = Client::start(EMPTY, "genblank").await;
+    client
+        .call("manage_project", json!({ "action": "create" }))
+        .await;
+    let out = client
+        .call("generate_image", json!({ "prompt": "   " }))
+        .await;
+    assert_eq!(out["status"], "refused");
+}
+
+#[tokio::test]
+async fn the_job_list_starts_empty_and_reports_what_it_knows() {
+    let client = Client::start(EMPTY, "jobs").await;
+    let listed = client.call("manage_jobs", json!({})).await;
+    assert_eq!(listed["running"], 0);
+    assert_eq!(listed["jobs"].as_array().unwrap().len(), 0);
+
+    let unknown = client
+        .call(
+            "manage_jobs",
+            json!({ "action": "status", "jobId": "ghost" }),
+        )
+        .await;
+    assert_eq!(unknown["status"], "refused");
+
+    let no_id = client
+        .call("manage_jobs", json!({ "action": "status" }))
+        .await;
+    assert_eq!(no_id["status"], "refused");
+
+    let bad = client
+        .call("manage_jobs", json!({ "action": "explode" }))
+        .await;
+    assert_eq!(bad["status"], "refused");
+}
+
+#[tokio::test]
+async fn cancelling_an_unknown_job_is_refused_not_silently_ignored() {
+    let client = Client::start(EMPTY, "jobcancel").await;
+    let out = client
+        .call(
+            "manage_jobs",
+            json!({ "action": "cancel", "jobId": "ghost" }),
+        )
+        .await;
+    assert_eq!(out["status"], "refused");
+}
+
+#[tokio::test]
+async fn listing_keys_never_reveals_one() {
+    let client = Client::start(EMPTY, "keys").await;
+    let listed = client.call("manage_keys", json!({})).await;
+    assert_eq!(listed["provider"], "stitch");
+    assert!(listed["count"].is_number());
+    // Whatever is configured, the response carries hints, never whole keys.
+    for hint in listed["keys"].as_array().unwrap() {
+        let hint = hint.as_str().unwrap();
+        assert!(
+            hint.contains('…') || hint.contains('•'),
+            "a listed key looks unmasked: {hint}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn key_management_refuses_what_it_cannot_do() {
+    let client = Client::start(EMPTY, "keysbad").await;
+    for (arguments, why) in [
+        (json!({ "provider": "openai" }), "unknown provider"),
+        (json!({ "action": "set" }), "set without a key"),
+        (json!({ "action": "forget" }), "forget without a slot"),
+        (json!({ "action": "explode" }), "unknown action"),
+    ] {
+        let out = client.call("manage_keys", arguments.clone()).await;
+        assert_eq!(out["status"], "refused", "{why}: {out}");
+    }
+}

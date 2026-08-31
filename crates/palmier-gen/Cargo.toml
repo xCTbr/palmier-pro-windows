@@ -1,0 +1,18 @@
+[package]
+name = "palmier-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keyring = { version = "4.2.0", features = ["windows-native-keyring-store", "zbus-secret-service-keyring-store"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["time"] }

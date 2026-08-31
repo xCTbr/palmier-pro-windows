@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+pub mod jobs;
 pub mod render;
 pub mod session;
 
@@ -34,6 +35,7 @@ const NO_PROJECT: &str = "no project is open — call manage_project with action
 #[derive(Clone)]
 pub struct Palmier {
     session: Arc<Mutex<Session>>,
+    jobs: jobs::Jobs,
     tool_router: ToolRouter<Self>,
 }
 
@@ -41,6 +43,7 @@ impl Palmier {
     pub fn new() -> Self {
         Self {
             session: Arc::new(Mutex::new(Session::default())),
+            jobs: jobs::Jobs::new(),
             tool_router: Self::tool_router(),
         }
     }
@@ -437,6 +440,44 @@ pub struct CaptureFrameArgs {
     pub frame: i64,
     /// Where to write the PNG.
     pub output: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateImageArgs {
+    /// What the picture should be. Describe the subject, the light, and the framing.
+    pub prompt: String,
+    /// How many times to cycle through every key before giving up. Defaults to 2.
+    #[serde(default)]
+    pub rounds: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageJobsArgs {
+    /// `list`, `status`, or `cancel`. Defaults to `list`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// The job to ask about or stop.
+    #[serde(default)]
+    pub job_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ManageKeysArgs {
+    /// `list`, `set`, or `forget`. Defaults to `list`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// Which provider. Only `stitch` today.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Which slot to write or clear, counting from 1.
+    #[serde(default)]
+    pub slot: Option<usize>,
+    /// The key itself, for `set`. It is never echoed back.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1357,6 +1398,206 @@ thumbnail, a still, or a frame to bring back in as media."
                 "height": timeline.height,
             })),
             Err(error) => refused(error.to_string()),
+        }
+    }
+
+    #[tool(
+        description = "Generate an image and add it to the project's media, ready for \
+add_clips.\n\n\
+Generation takes minutes, so this returns a jobId at once rather than making you wait. \
+Poll it with manage_jobs; when the job is done its result carries the mediaRef.\n\n\
+Keys are yours and are configured with manage_keys. When several are set, they are used \
+one at a time and the next is tried only when the current one fails — whether from \
+exhausted quota or a passing error."
+    )]
+    async fn generate_image(
+        &self,
+        Parameters(args): Parameters<GenerateImageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if args.prompt.trim().is_empty() {
+            return refused("`prompt` is empty");
+        }
+        let (media_dir, package) = {
+            let session = self.session.lock().await;
+            if !session.is_open() {
+                return refused(NO_PROJECT);
+            }
+            match session.package_dir() {
+                Some(dir) => (dir.join("media"), dir),
+                // A project held only in memory has nowhere to put the file.
+                None => {
+                    return refused(
+                        "save the project first — a generated image needs somewhere to live",
+                    );
+                }
+            }
+        };
+
+        let keys = palmier_gen::KeyRing::load("stitch", "STITCH_API_KEY");
+        if keys.is_empty() {
+            return refused(
+                "no Stitch keys configured — add one with manage_keys before generating",
+            );
+        }
+        let provider = match palmier_gen::Stitch::new(keys, "Palmier") {
+            Ok(provider) => provider,
+            Err(error) => return refused(error.to_string()),
+        };
+
+        let label = args.prompt.chars().take(60).collect::<String>();
+        let (job_id, cancel) = self.jobs.submit("generate_image", label).await;
+
+        let jobs = self.jobs.clone();
+        let session = self.session.clone();
+        let id = job_id.clone();
+        let prompt = args.prompt.clone();
+        let rounds = args.rounds.unwrap_or(2);
+
+        tokio::spawn(async move {
+            let generated = tokio::select! {
+                result = provider.generate(&prompt, rounds) => result,
+                _ = cancel.cancelled() => return,
+            };
+            let image = match generated {
+                Ok(image) => image,
+                Err(error) => return jobs.fail(&id, error.to_string()).await,
+            };
+            if cancel.is_cancelled() {
+                return;
+            }
+
+            // Land it in the package so the manifest can reference it relatively.
+            let name = format!("generated-{}.{}", &id[..8], image.extension);
+            let path = media_dir.join(&name);
+            if let Err(error) = std::fs::create_dir_all(&media_dir)
+                .and_then(|()| std::fs::write(&path, &image.bytes))
+            {
+                return jobs
+                    .fail(&id, format!("cannot write {}: {error}", path.display()))
+                    .await;
+            }
+
+            let info = match palmier_media::probe(&path) {
+                Ok(info) => info,
+                Err(error) => return jobs.fail(&id, error.to_string()).await,
+            };
+            let media_ref = uuid::Uuid::new_v4().to_string();
+            let entry = session::entry_for(media_ref.clone(), &path, &info, Some(&package));
+            session.lock().await.add_media(entry);
+
+            jobs.succeed(
+                &id,
+                json!({
+                    "mediaRef": media_ref,
+                    "name": name,
+                    "path": path.display().to_string(),
+                    "width": image.width.or(info.width),
+                    "height": image.height.or(info.height),
+                }),
+            )
+            .await;
+        });
+
+        ok(json!({
+            "status": "queued",
+            "jobId": job_id,
+            "detail": "generation runs in the background; poll manage_jobs for the mediaRef",
+        }))
+    }
+
+    #[tool(
+        description = "List background jobs, check one, or cancel one. Generation runs \
+here; a job that is `done` carries its result, and one that `failed` carries why."
+    )]
+    async fn manage_jobs(
+        &self,
+        Parameters(args): Parameters<ManageJobsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match args.action.as_deref().unwrap_or("list") {
+            "list" => {
+                let jobs = self.jobs.list().await;
+                ok(json!({
+                    "running": self.jobs.running_count().await,
+                    "jobs": jobs.iter().map(|j| j.render()).collect::<Vec<_>>(),
+                }))
+            }
+            "status" => {
+                let Some(job_id) = args.job_id else {
+                    return refused("`status` needs a jobId");
+                };
+                match self.jobs.get(&job_id).await {
+                    Some(job) => ok(job.render()),
+                    None => refused(format!("unknown job `{job_id}`")),
+                }
+            }
+            "cancel" => {
+                let Some(job_id) = args.job_id else {
+                    return refused("`cancel` needs a jobId");
+                };
+                if self.jobs.cancel(&job_id).await {
+                    ok(json!({ "status": "cancelled", "jobId": job_id }))
+                } else {
+                    refused(format!("job `{job_id}` is unknown or already finished"))
+                }
+            }
+            other => refused(format!(
+                "unknown action `{other}`; expected list, status, or cancel"
+            )),
+        }
+    }
+
+    #[tool(
+        description = "See which provider keys are configured, add one, or remove one. \
+Keys are stored in the operating system's keychain and are never echoed back — listing \
+shows only how many there are and a few characters of each, enough to tell them apart.\n\n\
+Several keys for one provider are used one at a time, moving to the next only when the \
+current one fails."
+    )]
+    async fn manage_keys(
+        &self,
+        Parameters(args): Parameters<ManageKeysArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let provider = args.provider.as_deref().unwrap_or("stitch");
+        if provider != "stitch" {
+            return refused(format!("unknown provider `{provider}`; only stitch today"));
+        }
+        let env_prefix = "STITCH_API_KEY";
+
+        match args.action.as_deref().unwrap_or("list") {
+            "list" => {
+                let ring = palmier_gen::KeyRing::load(provider, env_prefix);
+                ok(json!({
+                    "provider": provider,
+                    "count": ring.len(),
+                    "keys": ring.hints(),
+                }))
+            }
+            "set" => {
+                let Some(key) = args.key else {
+                    return refused("`set` needs a key");
+                };
+                let slot = args
+                    .slot
+                    .unwrap_or_else(|| palmier_gen::KeyRing::load(provider, env_prefix).len() + 1);
+                match palmier_gen::KeyRing::store(provider, slot.max(1), &key) {
+                    Ok(()) => ok(json!({ "status": "stored", "provider": provider, "slot": slot })),
+                    Err(error) => refused(error.to_string()),
+                }
+            }
+            "forget" => {
+                let Some(slot) = args.slot else {
+                    return refused("`forget` needs a slot");
+                };
+                match palmier_gen::KeyRing::forget(provider, slot) {
+                    Ok(()) => {
+                        ok(json!({ "status": "forgotten", "provider": provider, "slot": slot }))
+                    }
+                    Err(error) => refused(error.to_string()),
+                }
+            }
+            other => refused(format!(
+                "unknown action `{other}`; expected list, set, or forget"
+            )),
         }
     }
 

@@ -12,13 +12,14 @@ workspace = true
 [dependencies]
 axum = "0.8.9"
 palmier-core = { version = "0.0.1", path = "../palmier-core" }
+palmier-gen = { version = "0.0.1", path = "../palmier-gen" }
 palmier-media = { version = "0.0.1", path = "../palmier-media" }
 rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server", "schemars", "transport-io"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tower-service = "0.3.3"
 uuid = { version = "1.26.0", features = ["v4"] }
 

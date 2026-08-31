@@ -14,7 +14,7 @@ Windows, Linux, and macOS. Free, and open source under GPLv3.
 
 | | | |
 |---|---|---|
-| **L0** | MCP daemon — project model, edit commands, 26 tools, render via FFmpeg | **done** |
+| **L0** | MCP daemon — project model, edit commands, 29 tools, render via FFmpeg | **done** |
 | **L1** | Own compositor on wgpu; color, effects, keyframes | not started |
 | **L2** | The app — timeline, preview, inspector, export | not started |
 | **L3** | Multicam, local transcription, visual search, BYOK generation | not started |
