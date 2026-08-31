@@ -219,3 +219,102 @@ fn adding_a_track_at_an_index_beyond_the_end_appends() {
     assert_eq!(s.project.timelines[0].tracks.len(), 2);
     assert_eq!(s.project.timelines[0].tracks[1].track_type, ClipType::Audio);
 }
+
+/// Extreme frame operands on every command that takes one.
+///
+/// This was a real defect: `trim_clip` added `delta_frames` to `start_frame` unchecked,
+/// so `i64::MIN` panicked in a debug build. The property test found it, but only on the
+/// platform whose random seed happened to try that value — Linux passed and Windows did
+/// not. Boundaries this important are asserted explicitly, not left to chance.
+#[test]
+fn extreme_frame_operands_refuse_instead_of_panicking() {
+    let extremes = [i64::MIN, i64::MIN + 1, -1, 0, 1, i64::MAX - 1, i64::MAX];
+
+    for value in extremes {
+        let mut s = session(&[
+            track("v1", "video", &[("a", 10, 30)]),
+            track("v2", "video", &[]),
+        ]);
+
+        // Every command that accepts a frame, at every extreme.
+        let commands = vec![
+            EditCommand::TrimClip {
+                clip_id: "a".into(),
+                edge: TrimEdge::Left,
+                delta_frames: value,
+            },
+            EditCommand::TrimClip {
+                clip_id: "a".into(),
+                edge: TrimEdge::Right,
+                delta_frames: value,
+            },
+            EditCommand::MoveClips {
+                moves: vec![ClipMove {
+                    clip_id: "a".into(),
+                    to_track_id: "v2".into(),
+                    to_frame: value,
+                }],
+            },
+            EditCommand::SplitClips {
+                points: vec![SplitPoint {
+                    track_id: "v1".into(),
+                    at_frame: value,
+                }],
+            },
+            EditCommand::RippleDeleteRanges {
+                ranges: vec![(value, value)],
+            },
+            EditCommand::RippleDeleteRanges {
+                ranges: vec![(0, value)],
+            },
+            EditCommand::AddClips {
+                track_id: "v1".into(),
+                clips: vec![new_clip("x", value, 30)],
+            },
+            EditCommand::InsertClips {
+                track_id: "v1".into(),
+                at_frame: value,
+                clips: vec![new_clip("y", 0, 30)],
+            },
+        ];
+
+        for command in commands {
+            // Snapshot per command: earlier ones in this list legitimately apply.
+            let before = s.project.clone();
+            // The contract is only that it must not panic; refusing is a fine outcome.
+            match s.apply(command.clone()) {
+                Err(_) => assert_eq!(
+                    s.project, before,
+                    "{command:?} at {value} refused but mutated the project"
+                ),
+                Ok(receipt) if receipt.is_no_op() => {}
+                Ok(_) => {
+                    // It applied, so the timeline must still be arithmetically sound.
+                    for t in &s.project.timelines {
+                        let _ = t.total_frames();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A linked partner at an extreme offset must not overflow either — the partner move is
+/// computed from a delta, which is its own subtraction.
+#[test]
+fn a_linked_partner_at_an_extreme_offset_does_not_panic() {
+    let mut s = linked_session();
+    for frame in [i64::MIN, i64::MAX, i64::MAX - 100] {
+        let before = s.project.clone();
+        let result = s.apply(EditCommand::MoveClips {
+            moves: vec![ClipMove {
+                clip_id: "v".into(),
+                to_track_id: "v1".into(),
+                to_frame: frame,
+            }],
+        });
+        if result.is_err() {
+            assert_eq!(s.project, before);
+        }
+    }
+}

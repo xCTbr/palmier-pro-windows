@@ -62,6 +62,16 @@ fn compatible(source: ClipType, destination: ClipType) -> bool {
     }
 }
 
+/// Frame arithmetic that refuses instead of panicking.
+///
+/// Constitution principle IV: validate before computing. A debug build panics on
+/// overflow and a release build wraps silently — both are defects when the operand came
+/// from an agent.
+fn checked(label: &str, a: i64, b: i64) -> Result<i64, RefusalReason> {
+    a.checked_add(b)
+        .ok_or_else(|| RefusalReason::FrameOverflow(label.to_string()))
+}
+
 fn validate_frame(label: &str, frame: i64, duration: i64) -> Result<(), RefusalReason> {
     if frame < 0 {
         return Err(RefusalReason::NegativeFrame(label.to_string()));
@@ -274,7 +284,7 @@ pub(crate) fn add_clips(
         if clip.id.is_none() {
             clip.id = Some(uuid::Uuid::new_v4().to_string());
         }
-        let end = clip.start_frame + clip.duration_frames;
+        let end = checked(&clip.media_ref, clip.start_frame, clip.duration_frames)?;
         if insert_at.is_none() {
             clear_region(
                 timeline,
@@ -351,7 +361,7 @@ pub(crate) fn move_clips(
         let Some(id) = item.clip.id.as_deref() else {
             continue;
         };
-        let delta = item.to_frame - item.clip.start_frame;
+        let delta = checked(id, item.to_frame, -item.clip.start_frame.max(i64::MIN + 1))?;
         if delta == 0 {
             continue;
         }
@@ -362,7 +372,7 @@ pub(crate) fn move_clips(
             let partner = find_clip(timeline, &partner_id)
                 .ok_or_else(|| RefusalReason::UnknownClip(partner_id.clone()))?
                 .clone();
-            let to_frame = partner.start_frame + delta;
+            let to_frame = checked(&partner_id, partner.start_frame, delta)?;
             validate_frame(&partner_id, to_frame, partner.duration_frames)?;
             let from_track = track_id_of_clip(timeline, &partner_id).unwrap_or_default();
             partner_moves.push(Resolved {
@@ -686,13 +696,17 @@ pub(crate) fn trim_clip(
 
     let (new_start, new_duration, new_trim_start) = match edge {
         TrimEdge::Left => (
-            clip.start_frame + delta_frames,
-            clip.duration_frames - delta_frames,
+            checked(clip_id, clip.start_frame, delta_frames)?,
+            checked(
+                clip_id,
+                clip.duration_frames,
+                -delta_frames.max(i64::MIN + 1),
+            )?,
             advance_trim(clip.trim_start_frame, delta_frames, clip.speed),
         ),
         TrimEdge::Right => (
             clip.start_frame,
-            clip.duration_frames + delta_frames,
+            checked(clip_id, clip.duration_frames, delta_frames)?,
             clip.trim_start_frame,
         ),
     };
