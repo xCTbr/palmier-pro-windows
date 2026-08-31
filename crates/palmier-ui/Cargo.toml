@@ -1,5 +1,5 @@
 [package]
-name = "palmier"
+name = "palmier-ui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,16 +10,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-anyhow = "1.0.104"
 axum = "0.8.9"
-clap = { version = "4.6.6", features = ["derive"] }
 palmier-core = { version = "0.0.1", path = "../palmier-core" }
+palmier-gen = { version = "0.0.1", path = "../palmier-gen" }
 palmier-mcp = { version = "0.0.1", path = "../palmier-mcp" }
-palmier-ui = { version = "0.0.1", path = "../palmier-ui" }
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal"] }
-tower-http = "0.7.0"
-tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
-
-[dev-dependencies]
+palmier-media = { version = "0.0.1", path = "../palmier-media" }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["sync"] }

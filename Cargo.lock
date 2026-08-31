@@ -1571,6 +1571,7 @@ dependencies = [
  "clap",
  "palmier-core",
  "palmier-mcp",
+ "palmier-ui",
  "serde_json",
  "tokio",
  "tower-http 0.7.0",
@@ -1629,6 +1630,20 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "palmier-ui"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "palmier-core",
+ "palmier-gen",
+ "palmier-mcp",
+ "palmier-media",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

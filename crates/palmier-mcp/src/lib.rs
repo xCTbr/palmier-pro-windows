@@ -41,11 +41,27 @@ pub struct Palmier {
 
 impl Palmier {
     pub fn new() -> Self {
+        Self::shared(Arc::new(Mutex::new(Session::default())), jobs::Jobs::new())
+    }
+
+    /// Build a server over state someone else owns.
+    ///
+    /// Every MCP client, and the desktop UI, must edit the *same* project. A factory
+    /// that made fresh state per connection would give two agents two different films.
+    pub fn shared(session: Arc<Mutex<Session>>, jobs: jobs::Jobs) -> Self {
         Self {
-            session: Arc::new(Mutex::new(Session::default())),
-            jobs: jobs::Jobs::new(),
+            session,
+            jobs,
             tool_router: Self::tool_router(),
         }
+    }
+
+    pub fn session_handle(&self) -> Arc<Mutex<Session>> {
+        self.session.clone()
+    }
+
+    pub fn jobs_handle(&self) -> jobs::Jobs {
+        self.jobs.clone()
     }
 }
 
@@ -1721,20 +1737,28 @@ fn build_clip(entry: &AddClipEntry) -> Result<Clip, ErrorData> {
     Ok(project.timelines[0].tracks[0].clips[0].clone())
 }
 
-/// Build the HTTP service that serves MCP. `rmcp` stays an implementation detail of
-/// this crate; the binary only sees an `axum::Router`.
-pub fn http_router() -> axum::Router {
+/// Build the MCP service over shared state.
+///
+/// The session is created once by the caller and closed over here, so every connecting
+/// client edits the same project rather than one of its own. `rmcp` stays an
+/// implementation detail of this crate; callers only see an `axum::Router`.
+pub fn mcp_router(session: Arc<Mutex<Session>>, jobs: jobs::Jobs) -> axum::Router {
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService,
     };
 
     let service = StreamableHttpService::new(
-        || Ok(Palmier::new()),
+        move || Ok(Palmier::shared(session.clone(), jobs.clone())),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
     axum::Router::new().nest_service("/mcp", service)
+}
+
+/// The MCP surface alone, over fresh state. Convenient for tests.
+pub fn http_router() -> axum::Router {
+    mcp_router(Arc::new(Mutex::new(Session::default())), jobs::Jobs::new())
 }
 
 /// Serve MCP over stdin/stdout.
