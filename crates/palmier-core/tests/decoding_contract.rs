@@ -239,3 +239,44 @@ fn transform_migrates_legacy_x_y() {
     // centerY = y + height - 0.5 = 0.2 + 0.4 - 0.5
     assert!((t.center_y - 0.1).abs() < 1e-9, "got {}", t.center_y);
 }
+
+// ---- media manifest: regression for the two bugs spec 001's coverage gap hid ----
+
+/// `MediaSource` is a Swift enum with associated values, so it is a single-key object
+/// on the wire, never a bare string. Modelling it as a plain string enum meant no real
+/// `media.json` could be decoded at all.
+#[test]
+fn media_source_decodes_as_a_single_key_object() {
+    use palmier_core::media::{MediaManifest, MediaSource};
+    let json = br#"{"version":1,"entries":[
+        {"id":"a1","name":"clip.mp4","type":"video","duration":12.5,
+         "source":{"external":{"absolutePath":"/movies/clip.mp4"}}},
+        {"id":"a2","name":"take.mov","type":"video","duration":3.0,
+         "source":{"project":{"relativePath":"media/take.mov"}}}],
+      "folders":[]}"#;
+    let mut path = palmier_core::codec::PathStack::new();
+    let value: serde_json::Value = serde_json::from_slice(json).unwrap();
+    let serde_json::Value::Object(map) = value else {
+        unreachable!()
+    };
+    let manifest = <MediaManifest as palmier_core::codec::FromObject>::from_object(map, &mut path)
+        .expect("a real media.json must decode");
+
+    assert_eq!(manifest.entries.len(), 2);
+    assert_eq!(
+        manifest.entries[0].id, "a1",
+        "id is required and was missing from the model"
+    );
+    assert_eq!(
+        manifest.entries[0].source,
+        MediaSource::External {
+            absolute_path: "/movies/clip.mp4".into()
+        }
+    );
+
+    let dir = std::path::Path::new("/projects/x.palmier");
+    assert_eq!(
+        manifest.entries[1].source.resolve(Some(dir)).unwrap(),
+        dir.join("media/take.mov")
+    );
+}

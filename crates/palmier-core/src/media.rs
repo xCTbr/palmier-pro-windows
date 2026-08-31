@@ -7,12 +7,28 @@ use serde_json::Value;
 use crate::codec::{DecodeError, Extra, FromObject, Object, PathStack, take_or_default};
 use crate::codec::{ObjectWriter, ToObject};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Where an asset's bytes live.
+///
+/// Swift encodes an enum with associated values as a single-key object, so this is
+/// `{"external": {"absolutePath": "/…"}}` or `{"project": {"relativePath": "media/…"}}`
+/// on the wire — not a bare string.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum MediaSource {
-    Local,
-    Generated,
-    Remote,
+    /// An absolute path outside the project package.
+    External { absolute_path: String },
+    /// A path relative to the project package, normally under `media/`.
+    Project { relative_path: String },
+}
+
+impl MediaSource {
+    /// Resolve to a path on disk. `project_dir` is the `.palmier` folder.
+    pub fn resolve(&self, project_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+        match self {
+            Self::External { absolute_path } => Some(std::path::PathBuf::from(absolute_path)),
+            Self::Project { relative_path } => project_dir.map(|dir| dir.join(relative_path)),
+        }
+    }
 }
 
 /// `name` required; `parentFolderId` optional.
@@ -34,6 +50,8 @@ pub struct MediaFolder {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaManifestEntry {
+    /// Required. This is the `mediaRef` a clip carries.
+    pub id: String,
     pub name: String,
     #[serde(rename = "type")]
     pub media_type: crate::timeline::ClipType,

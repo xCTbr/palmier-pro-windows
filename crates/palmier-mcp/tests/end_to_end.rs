@@ -526,3 +526,259 @@ async fn the_listener_binds_loopback_only() {
     assert!(address.ip().is_loopback());
     assert_eq!(palmier_mcp::DEFAULT_PORT, 19789, "the original's port");
 }
+
+// ---------------------------------------------------- media and export
+
+fn ffmpeg_available() -> bool {
+    palmier_media::require_tool("ffmpeg").is_ok() && palmier_media::require_tool("ffprobe").is_ok()
+}
+
+/// A short synthetic source file inside the client's working directory.
+fn make_source(dir: &std::path::Path, name: &str, pattern: &str) -> String {
+    let path = dir.join(name);
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y"])
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("{pattern}=size=320x240:rate=30:duration=2"),
+        ])
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=2"])
+        .args([
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+        ])
+        .arg(&path)
+        .output()
+        .expect("ffmpeg must run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    path.to_string_lossy().into_owned()
+}
+
+const EMPTY: &str = r#"{"timelines":[{"id":"tl","name":"Cut","fps":30,"width":640,"height":360,
+  "tracks":[{"id":"v1","type":"video","clips":[]}]}],"activeTimelineId":"tl"}"#;
+
+#[tokio::test]
+async fn importing_probes_the_file_and_returns_a_usable_ref() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "import").await;
+    client.open().await;
+    let source = make_source(&client.dir, "take.mp4", "testsrc");
+
+    let out = client
+        .call("import_media", json!({ "paths": [source] }))
+        .await;
+    assert_eq!(out["status"], "imported");
+    let entry = &out["media"][0];
+    assert_eq!(entry["name"], "take.mp4");
+    assert_eq!(entry["width"], 320);
+    assert_eq!(entry["hasAudio"], true);
+    assert!((entry["durationSeconds"].as_f64().unwrap() - 2.0).abs() < 0.1);
+
+    // The ref works: a clip placed with it lands on the timeline.
+    let media_ref = entry["mediaRef"].as_str().unwrap();
+    let placed = client
+        .call(
+            "add_clips",
+            json!({ "entries": [{ "mediaRef": media_ref, "trackId": "v1",
+                                  "startFrame": 0, "endFrame": 30 }] }),
+        )
+        .await;
+    assert_eq!(placed["status"], "applied");
+}
+
+#[tokio::test]
+async fn one_unreadable_file_rejects_the_whole_import() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "importbad").await;
+    client.open().await;
+    let good = make_source(&client.dir, "good.mp4", "testsrc");
+    let junk = client.dir.join("junk.mp4");
+    std::fs::write(&junk, b"not a video").unwrap();
+
+    let out = client
+        .call(
+            "import_media",
+            json!({ "paths": [good, junk.to_string_lossy()] }),
+        )
+        .await;
+    assert_eq!(out["status"], "refused");
+
+    // No partial state: the good file was not recorded either.
+    let media = client.call("get_media", json!({})).await;
+    assert!(media["media"].as_array().unwrap().is_empty(), "{media}");
+}
+
+#[tokio::test]
+async fn get_media_reports_whether_a_file_is_still_there() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "getmedia").await;
+    client.open().await;
+    let source = make_source(&client.dir, "take.mp4", "testsrc");
+    client
+        .call("import_media", json!({ "paths": [&source] }))
+        .await;
+
+    let listed = client.call("get_media", json!({})).await;
+    assert_eq!(listed["media"][0]["resolved"], true);
+
+    std::fs::remove_file(&source).unwrap();
+    let after = client.call("get_media", json!({})).await;
+    assert_eq!(
+        after["media"][0]["resolved"], false,
+        "a vanished file must be reported"
+    );
+}
+
+#[tokio::test]
+async fn exporting_produces_a_file_the_timeline_describes() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "export").await;
+    client.open().await;
+    let a = make_source(&client.dir, "a.mp4", "testsrc");
+    let b = make_source(&client.dir, "b.mp4", "testsrc2");
+    let imported = client
+        .call("import_media", json!({ "paths": [a, b] }))
+        .await;
+    let (ra, rb) = (
+        imported["media"][0]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        imported["media"][1]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
+
+    client
+        .call(
+            "add_clips",
+            json!({ "entries": [
+                { "mediaRef": ra, "trackId": "v1", "startFrame": 0, "endFrame": 30 },
+                { "mediaRef": rb, "trackId": "v1", "startFrame": 30, "endFrame": 60 }
+            ]}),
+        )
+        .await;
+
+    let output = client.dir.join("out.mp4");
+    let out = client
+        .call(
+            "export_project",
+            json!({ "output": output.to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(out["status"], "exported", "{out}");
+    assert_eq!(out["durationSeconds"], 2.0, "60 frames at 30fps");
+    assert_eq!(out["width"], 640);
+
+    let info = palmier_media::probe(&output).expect("the export must be a real video");
+    assert!(
+        (info.duration_seconds - 2.0).abs() < 0.2,
+        "got {}s",
+        info.duration_seconds
+    );
+    assert_eq!(info.width, Some(640));
+}
+
+#[tokio::test]
+async fn exporting_reports_media_that_vanished_rather_than_hiding_it() {
+    if !ffmpeg_available() {
+        eprintln!("skipped: ffmpeg not on PATH");
+        return;
+    }
+    let client = Client::start(EMPTY, "exportmissing").await;
+    client.open().await;
+    let a = make_source(&client.dir, "a.mp4", "testsrc");
+    let b = make_source(&client.dir, "b.mp4", "testsrc2");
+    let imported = client
+        .call("import_media", json!({ "paths": [&a, &b] }))
+        .await;
+    let (ra, rb) = (
+        imported["media"][0]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        imported["media"][1]["mediaRef"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    );
+    client
+        .call(
+            "add_clips",
+            json!({ "entries": [
+                { "mediaRef": ra, "trackId": "v1", "startFrame": 0, "endFrame": 30 },
+                { "mediaRef": rb, "trackId": "v1", "startFrame": 30, "endFrame": 60 }
+            ]}),
+        )
+        .await;
+    std::fs::remove_file(&b).unwrap();
+
+    let out = client
+        .call(
+            "export_project",
+            json!({ "output": client.dir.join("out.mp4").to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(out["status"], "exported");
+    assert_eq!(
+        out["missingMedia"],
+        json!([rb]),
+        "a shorter film must never be silent about why"
+    );
+}
+
+#[tokio::test]
+async fn exporting_an_empty_timeline_is_refused() {
+    let client = Client::start(EMPTY, "exportempty").await;
+    client.open().await;
+    let out = client
+        .call(
+            "export_project",
+            json!({ "output": client.dir.join("out.mp4").to_string_lossy() }),
+        )
+        .await;
+    assert_eq!(out["status"], "refused");
+    assert!(out["reason"].as_str().unwrap().contains("empty"), "{out}");
+}
+
+#[tokio::test]
+async fn an_unsupported_codec_or_crf_is_refused() {
+    let client = Client::start(EMPTY, "exportbad").await;
+    client.open().await;
+    let output = client.dir.join("out.mp4").to_string_lossy().into_owned();
+    let bad_codec = client
+        .call(
+            "export_project",
+            json!({ "output": &output, "codec": "prores" }),
+        )
+        .await;
+    assert_eq!(bad_codec["status"], "refused");
+    let bad_crf = client
+        .call("export_project", json!({ "output": &output, "crf": 99 }))
+        .await;
+    assert_eq!(bad_crf["status"], "refused");
+}

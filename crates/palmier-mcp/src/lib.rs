@@ -235,6 +235,31 @@ pub struct TrimClipArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ImportMediaArgs {
+    /// Absolute paths to media files. Each is probed; one unreadable file rejects the
+    /// whole call with no partial state.
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GetMediaArgs {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportProjectArgs {
+    /// Where to write the file.
+    pub output: String,
+    /// Optional. `h264` (default) or `h265`.
+    #[serde(default)]
+    pub codec: Option<String>,
+    /// Optional. Constant Rate Factor, 0–51. Lower is better quality, larger file.
+    #[serde(default)]
+    pub crf: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UndoArgs {
     /// When true, reapply the change that was last undone instead of undoing.
     #[serde(default)]
@@ -572,6 +597,142 @@ merge before anything moves."
             delta_frames: args.delta_frames,
         };
         self.run(&mut session, command).await
+    }
+
+    #[tool(
+        description = "Import media files into the project so clips can reference them. \
+Each file is probed for duration, resolution, frame rate, and whether it carries audio; \
+the returned mediaRef is what add_clips takes. One unreadable file rejects the whole \
+call with no partial state."
+    )]
+    async fn import_media(
+        &self,
+        Parameters(args): Parameters<ImportMediaArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut session = self.session.lock().await;
+        if !session.is_open() {
+            return refused("no project is open — call manage_project with action 'open' first");
+        }
+        if args.paths.is_empty() {
+            return refused("`paths` is empty");
+        }
+
+        // Probe everything before recording anything, so a bad file leaves no trace.
+        let package = session.package_dir();
+        let mut probed = Vec::with_capacity(args.paths.len());
+        for raw in &args.paths {
+            let path = PathBuf::from(raw);
+            match palmier_media::probe(&path) {
+                Ok(info) => probed.push((path, info)),
+                Err(error) => return refused(format!("{raw}: {error}")),
+            }
+        }
+
+        let mut imported = Vec::with_capacity(probed.len());
+        for (path, info) in probed {
+            let id = uuid::Uuid::new_v4().to_string();
+            let entry = session::entry_for(id.clone(), &path, &info, package.as_deref());
+            imported.push(json!({
+                "mediaRef": id,
+                "name": entry.name,
+                "durationSeconds": info.duration_seconds,
+                "width": info.width,
+                "height": info.height,
+                "fps": info.fps,
+                "hasAudio": info.has_audio,
+            }));
+            session.add_media(entry);
+        }
+        ok(json!({ "status": "imported", "media": imported }))
+    }
+
+    #[tool(
+        description = "List the media this project knows about. A mediaRef here is what \
+add_clips takes. `resolved` is false when the file is missing from disk, in which case \
+clips using it render as black."
+    )]
+    async fn get_media(
+        &self,
+        Parameters(_args): Parameters<GetMediaArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        if !session.is_open() {
+            return refused("no project is open — call manage_project with action 'open' first");
+        }
+        let dir = session.package_dir();
+        let media: Vec<Value> = session
+            .manifest()
+            .entries
+            .iter()
+            .map(|e| {
+                let path = e.source.resolve(dir.as_deref());
+                let mut row = json!({
+                    "mediaRef": e.id,
+                    "name": e.name,
+                    "durationSeconds": e.duration,
+                    "resolved": path.as_ref().is_some_and(|p| p.is_file()),
+                });
+                if let Some(width) = e.source_width {
+                    row["width"] = json!(width);
+                }
+                if let Some(height) = e.source_height {
+                    row["height"] = json!(height);
+                }
+                if let Some(has_audio) = e.has_audio {
+                    row["hasAudio"] = json!(has_audio);
+                }
+                row
+            })
+            .collect();
+        ok(json!({ "media": media }))
+    }
+
+    #[tool(
+        description = "Render the timeline to a video file. Clips are composited bottom \
+track up, gaps render black, and audio is mixed. Any clip whose media is missing from \
+disk is reported in `missingMedia` rather than silently omitted."
+    )]
+    async fn export_project(
+        &self,
+        Parameters(args): Parameters<ExportProjectArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session = self.session.lock().await;
+        let Ok(project) = session.project() else {
+            return refused("no project is open — call manage_project with action 'open' first");
+        };
+        let Some(timeline) = project.timelines.first().cloned() else {
+            return refused("the project has no timelines");
+        };
+
+        let mut options = palmier_media::RenderOptions::new(&args.output);
+        if let Some(codec) = args.codec {
+            options.codec = codec;
+        }
+        if let Some(crf) = args.crf {
+            if crf > 51 {
+                return refused(format!("crf {crf} is out of range; use 0–51"));
+            }
+            options.crf = crf;
+        }
+
+        let resolve = session.resolver();
+        match palmier_media::render(&timeline, &resolve, &options) {
+            Ok(report) => {
+                let mut out = json!({
+                    "status": "exported",
+                    "output": report.output.display().to_string(),
+                    "durationSeconds": report.duration_seconds,
+                    "width": report.width,
+                    "height": report.height,
+                    "fps": report.fps,
+                });
+                if !report.missing_media.is_empty() {
+                    out["missingMedia"] = json!(report.missing_media);
+                }
+                ok(out)
+            }
+            Err(error) => refused(error.to_string()),
+        }
     }
 
     #[tool(

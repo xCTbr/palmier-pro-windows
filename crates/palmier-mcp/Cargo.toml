@@ -20,7 +20,9 @@ serde_json = "1.0.151"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tower-service = "0.3.3"
+uuid = { version = "1.26.0", features = ["v4"] }
 
 [dev-dependencies]
+palmier-media = { path = "../palmier-media" }
 reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "time"] }

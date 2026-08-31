@@ -6,12 +6,15 @@
 use std::path::{Path, PathBuf};
 
 use palmier_core::edit::EditSession;
+use palmier_core::media::{MediaManifest, MediaManifestEntry, MediaSource};
 use palmier_core::{ProjectFile, load_project};
+use palmier_media::ResolvedMedia;
 
 #[derive(Default)]
 pub struct Session {
     edit: Option<EditSession>,
     path: Option<PathBuf>,
+    manifest: MediaManifest,
     dirty: bool,
 }
 
@@ -40,6 +43,7 @@ impl Session {
         };
         self.edit = Some(EditSession::new(project));
         self.path = Some(file);
+        self.manifest = load_manifest(self.package_dir().as_deref());
         self.dirty = false;
         Ok(self.edit.as_mut().expect("just assigned"))
     }
@@ -47,7 +51,54 @@ impl Session {
     pub fn close(&mut self) {
         self.edit = None;
         self.path = None;
+        self.manifest = MediaManifest::default();
         self.dirty = false;
+    }
+
+    /// The `.palmier` folder holding `project.json`, `media.json`, and `media/`.
+    pub fn package_dir(&self) -> Option<PathBuf> {
+        self.path
+            .as_ref()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+    }
+
+    pub fn manifest(&self) -> &MediaManifest {
+        &self.manifest
+    }
+
+    pub fn add_media(&mut self, entry: MediaManifestEntry) {
+        self.manifest.entries.retain(|e| e.id != entry.id);
+        self.manifest.entries.push(entry);
+        self.dirty = true;
+    }
+
+    /// Resolve a `mediaRef` for the render graph. Probes lazily, because the manifest's
+    /// `hasAudio` is optional and an older project may not carry it.
+    pub fn resolver(&self) -> impl Fn(&str) -> Option<ResolvedMedia> + use<> {
+        let dir = self.package_dir();
+        let entries: Vec<(String, Option<PathBuf>, Option<bool>)> = self
+            .manifest
+            .entries
+            .iter()
+            .map(|e| (e.id.clone(), e.source.resolve(dir.as_deref()), e.has_audio))
+            .collect();
+        move |media_ref: &str| {
+            let (_, path, has_audio) = entries.iter().find(|(id, _, _)| id == media_ref)?;
+            let path = path.clone()?;
+            if !path.is_file() {
+                return None;
+            }
+            match has_audio {
+                Some(known) => Some(ResolvedMedia::new(path, *known, true)),
+                None => palmier_media::probe(&path)
+                    .ok()
+                    .map(|info| ResolvedMedia::new(path, info.has_audio, info.has_video)),
+            }
+        }
+    }
+
+    fn manifest_path(&self) -> Option<PathBuf> {
+        self.package_dir().map(|d| d.join("media.json"))
     }
 
     pub fn save(&mut self, to: Option<&Path>) -> Result<PathBuf, SessionError> {
@@ -72,6 +123,14 @@ impl Session {
             source,
         })?;
         self.path = Some(target.clone());
+        // The manifest goes out through the same encoder the project uses, so unknown
+        // fields from another version survive here too.
+        if let Some(manifest_path) = self.manifest_path() {
+            let object = palmier_core::codec::ToObject::to_object(&self.manifest);
+            if let Ok(bytes) = serde_json::to_vec_pretty(&serde_json::Value::Object(object)) {
+                let _ = std::fs::write(manifest_path, bytes);
+            }
+        }
         self.dirty = false;
         Ok(target)
     }
@@ -101,5 +160,65 @@ impl Session {
 
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+}
+
+/// Read `media.json` beside the project. A missing or unreadable manifest is an empty
+/// one, never a failure to open the project.
+fn load_manifest(dir: Option<&Path>) -> MediaManifest {
+    let Some(dir) = dir else {
+        return MediaManifest::default();
+    };
+    let Ok(bytes) = std::fs::read(dir.join("media.json")) else {
+        return MediaManifest::default();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return MediaManifest::default();
+    };
+    let serde_json::Value::Object(map) = value else {
+        return MediaManifest::default();
+    };
+    let mut path = palmier_core::codec::PathStack::new();
+    <MediaManifest as palmier_core::codec::FromObject>::from_object(map, &mut path)
+        .unwrap_or_default()
+}
+
+/// A manifest entry for a newly imported file.
+pub fn entry_for(
+    id: String,
+    path: &Path,
+    info: &palmier_media::MediaInfo,
+    package_dir: Option<&Path>,
+) -> MediaManifestEntry {
+    // Keep the reference relative when the file already lives inside the package.
+    let source = package_dir
+        .and_then(|dir| path.strip_prefix(dir).ok())
+        .map(|rel| MediaSource::Project {
+            relative_path: rel.to_string_lossy().into_owned(),
+        })
+        .unwrap_or_else(|| MediaSource::External {
+            absolute_path: path.to_string_lossy().into_owned(),
+        });
+
+    MediaManifestEntry {
+        id,
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        media_type: if info.has_video {
+            palmier_core::ClipType::Video
+        } else {
+            palmier_core::ClipType::Audio
+        },
+        source,
+        duration: info.duration_seconds,
+        generation_input: None,
+        source_width: info.width,
+        source_height: info.height,
+        source_fps: info.fps,
+        has_audio: Some(info.has_audio),
+        folder_id: None,
+        extra: Default::default(),
     }
 }
