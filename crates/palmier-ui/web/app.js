@@ -11,6 +11,8 @@ async function api(path, options) {
 }
 
 let toastTimer;
+// Last project revision drawn; -1 so the first poll always draws.
+let revision = -1;
 function toast(message, bad = false) {
   const el = $("toast");
   el.textContent = message;
@@ -51,6 +53,13 @@ async function refreshStatus() {
   $("ffmpeg-sub").textContent = ready
     ? "Rendering and media import will work."
     : `${s.ffmpeg.missing.join(" and ")} missing from PATH.`;
+
+  // An agent in a terminal edits the same session. Without this the timeline sat
+  // frozen until a tab was clicked, which looked exactly like nothing had happened.
+  if (s.project.revision !== revision) {
+    revision = s.project.revision;
+    refreshProject().catch(() => {});
+  }
 
   const open = s.project.open;
   dot($("project-stat").querySelector(".dot"), open ? "ok" : "warn");
@@ -150,7 +159,7 @@ async function refreshProject() {
 
   media.innerHTML = p.media.length
     ? ""
-    : `<li class="empty">No media yet. Import some, or ask your agent to.</li>`;
+    : `<li class="empty">No media yet. Ask your agent to import a file — copying one into the project folder does not add it.</li>`;
   for (const m of p.media) {
     const li = document.createElement("li");
     li.innerHTML =

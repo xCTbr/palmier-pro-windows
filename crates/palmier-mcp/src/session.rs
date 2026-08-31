@@ -16,6 +16,9 @@ pub struct Session {
     path: Option<PathBuf>,
     manifest: MediaManifest,
     dirty: bool,
+    /// Bumped whenever anything a viewer would draw changes. The UI polls it instead of
+    /// re-fetching the whole project, so an edit made from a terminal still shows up.
+    revision: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +70,7 @@ impl Session {
         self.path = None;
         self.manifest = MediaManifest::default();
         self.dirty = true;
+        self.revision += 1;
         Ok(())
     }
 
@@ -81,6 +85,7 @@ impl Session {
         self.path = Some(file);
         self.manifest = load_manifest(self.package_dir().as_deref());
         self.dirty = false;
+        self.revision += 1;
         Ok(self.edit.as_mut().expect("just assigned"))
     }
 
@@ -89,6 +94,7 @@ impl Session {
         self.path = None;
         self.manifest = MediaManifest::default();
         self.dirty = false;
+        self.revision += 1;
     }
 
     /// The `.palmier` folder holding `project.json`, `media.json`, and `media/`.
@@ -106,6 +112,7 @@ impl Session {
         self.manifest.entries.retain(|e| e.id != entry.id);
         self.manifest.entries.push(entry);
         self.dirty = true;
+        self.revision += 1;
     }
 
     /// Write `media.json` without touching the timeline.
@@ -201,6 +208,7 @@ impl Session {
             }
         }
         self.dirty = false;
+        self.revision += 1;
         Ok(target)
     }
 
@@ -232,6 +240,7 @@ impl Session {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+        self.revision += 1;
     }
 
     pub fn is_open(&self) -> bool {
@@ -240,6 +249,11 @@ impl Session {
 
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Changes every time the project does. Equality means nothing happened.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -304,5 +318,30 @@ pub fn entry_for(
         has_audio: Some(info.has_audio),
         folder_id: None,
         extra: Default::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The UI polls this to decide whether to redraw. If it moved on reads the timeline
+    // would refetch forever; if it stood still on edits it would never show an edit made
+    // from a terminal — which is how most of them are made.
+    #[test]
+    fn the_revision_moves_only_when_the_project_does() {
+        let mut session = Session::default();
+        let start = session.revision();
+
+        session.create(30, 1920, 1080).unwrap();
+        assert_ne!(session.revision(), start, "creating is a change");
+
+        let settled = session.revision();
+        let _ = session.active_timeline().unwrap();
+        let _ = session.is_dirty();
+        assert_eq!(session.revision(), settled, "reading is not a change");
+
+        session.mark_dirty();
+        assert_ne!(session.revision(), settled, "an applied edit is a change");
     }
 }

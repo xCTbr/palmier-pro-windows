@@ -81,6 +81,7 @@ async fn status(State(ui): State<Ui>) -> Json<Value> {
             "open": session.is_open(),
             "path": session.path().map(|p| p.display().to_string()),
             "unsaved": session.is_dirty(),
+            "revision": session.revision(),
         },
         "jobsRunning": ui.jobs.running_count().await,
         "chat": { "available": chat::cli_available() },
