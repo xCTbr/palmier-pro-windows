@@ -52,6 +52,7 @@ pub fn router(state: Ui) -> Router {
         .route("/api/keys/{slot}", axum::routing::delete(forget_key))
         .route("/api/project", get(project).post(open_or_create))
         .route("/api/project/save", post(save))
+        .route("/api/frame/{frame}", get(frame))
         .route("/api/jobs", get(list_jobs))
         .with_state(state)
 }
@@ -183,6 +184,38 @@ async fn save(State(ui): State<Ui>, Json(body): Json<serde_json::Value>) -> Resp
         .map(std::path::PathBuf::from);
     match session.save(path.as_deref()) {
         Ok(written) => Json(json!({ "status": "saved", "path": written.display().to_string() }))
+            .into_response(),
+        Err(error) => problem(error.to_string()),
+    }
+}
+
+/// One composited frame as a PNG.
+///
+/// Rendering shells out to ffmpeg and takes a moment, so this is a click-to-seek
+/// preview rather than a scrubbing one. Layer 1's compositor is what makes it live.
+async fn frame(State(ui): State<Ui>, Path(frame): Path<i64>) -> Response {
+    let session = ui.session.lock().await;
+    let Ok(timeline) = session.active_timeline().cloned() else {
+        return problem("no project is open");
+    };
+    if frame < 0 {
+        return problem("frame is before the start of the timeline");
+    }
+    let resolve = session.resolver();
+    // Held across the render, which is slow: the alternative is a torn frame from a
+    // timeline someone edited halfway through drawing it.
+    let options = palmier_media::FrameOptions {
+        grid: false,
+        max_width: 960,
+    };
+    match palmier_media::frame_png(&timeline, &resolve, frame, options) {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            bytes,
+        )
             .into_response(),
         Err(error) => problem(error.to_string()),
     }

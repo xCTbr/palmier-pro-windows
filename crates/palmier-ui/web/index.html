@@ -102,6 +102,26 @@
   <!-- --------------------------------------------------------- timeline -->
   <section class="view" id="view-timeline">
     <div class="stack">
+      <article class="card preview-card">
+        <div class="cardhead">
+          <h2>Preview</h2>
+          <span class="meta" id="pv-meta"></span>
+        </div>
+        <div class="preview" id="preview">
+          <img id="pv-img" alt="Composited frame">
+          <div class="pv-empty" id="pv-empty">Click the timeline to see a frame.</div>
+          <div class="pv-busy" id="pv-busy">rendering…</div>
+        </div>
+        <div class="transport">
+          <button class="btn" id="pv-start" title="First frame">|◀</button>
+          <button class="btn" id="pv-back10">−10</button>
+          <button class="btn" id="pv-back">−1</button>
+          <input type="number" id="pv-frame" value="0" min="0" step="1">
+          <button class="btn" id="pv-fwd">+1</button>
+          <button class="btn" id="pv-fwd10">+10</button>
+          <button class="btn" id="pv-end" title="Last frame">▶|</button>
+        </div>
+      </article>
       <article class="card">
         <div class="cardhead">
           <h2 id="tl-name">Timeline</h2>

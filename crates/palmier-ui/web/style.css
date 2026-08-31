@@ -187,3 +187,44 @@ input::placeholder { color: var(--ink-3); }
 .toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.bad { border-color: var(--bad); color: var(--bad); }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+
+/* --------------------------------------------------------------- preview */
+.preview {
+  position: relative; background: #000; border: 1px solid var(--rule);
+  border-radius: 6px; aspect-ratio: 16 / 9; display: grid; place-items: center;
+  overflow: hidden; margin-top: 8px;
+  /* Capped so the timeline stays on screen beside it — a preview that pushes the cut
+     out of view defeats the point of looking at both. */
+  max-height: 46vh;
+}
+.preview img { max-width: 100%; max-height: 100%; display: none; }
+.preview img.is-on { display: block; }
+.pv-empty { color: var(--ink-3); font-size: 13px; }
+.pv-empty.is-off { display: none; }
+.pv-busy {
+  position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--amber);
+  background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 4px;
+  opacity: 0; transition: opacity .15s;
+}
+.pv-busy.is-on { opacity: 1; }
+.transport { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+.transport .btn { padding: 6px 10px; font-family: ui-monospace, monospace; font-size: 12px; }
+.transport input {
+  width: 88px; flex: none; text-align: center;
+  font-family: ui-monospace, monospace; font-size: 13px;
+}
+.transport input::-webkit-outer-spin-button,
+.transport input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* The playhead, and a timeline you can click to move it. */
+.lane { cursor: crosshair; }
+.playhead {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber);
+  pointer-events: none; z-index: 2;
+}
+.playhead::before {
+  content: ""; position: absolute; top: -4px; left: -3px;
+  border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+  border-top: 5px solid var(--amber);
+}
+@media (prefers-reduced-motion: reduce) { .pv-busy { transition: none; } }

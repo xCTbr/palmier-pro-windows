@@ -160,6 +160,72 @@ async function refreshProject() {
   drawTimeline(p.timeline, names);
 }
 
+// --------------------------------------------------------------- preview
+let currentTimeline = null;
+let playhead = 0;
+let pending = null;
+
+function clampFrame(frame) {
+  const last = Math.max((currentTimeline?.totalFrames ?? 1) - 1, 0);
+  return Math.min(Math.max(Math.round(frame), 0), last);
+}
+
+/// Fetch one composited frame. Requests are coalesced: a render takes a moment, and
+/// clicking three times should show the third frame, not queue three renders.
+async function showFrame(frame) {
+  if (!currentTimeline) return;
+  playhead = clampFrame(frame);
+  $("pv-frame").value = playhead;
+  drawPlayhead();
+
+  const fps = currentTimeline.fps;
+  $("pv-meta").textContent = `frame ${playhead} · ${timecode(playhead, fps)}`;
+
+  if (pending) { pending.wanted = playhead; return; }
+  pending = { wanted: playhead };
+  $("pv-busy").classList.add("is-on");
+
+  try {
+    while (pending) {
+      const wanted = pending.wanted;
+      const response = await fetch(`/api/frame/${wanted}`, { cache: "no-store" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      // Another click landed while this was rendering; go again for the newest.
+      if (pending.wanted !== wanted) continue;
+      const img = $("pv-img");
+      const previous = img.src;
+      img.src = URL.createObjectURL(blob);
+      img.classList.add("is-on");
+      $("pv-empty").classList.add("is-off");
+      if (previous.startsWith("blob:")) URL.revokeObjectURL(previous);
+      pending = null;
+    }
+  } catch (e) {
+    pending = null;
+    toast(e.message, true);
+  } finally {
+    $("pv-busy").classList.remove("is-on");
+  }
+}
+
+function drawPlayhead() {
+  const span = Math.max(currentTimeline?.totalFrames ?? 1, 1);
+  for (const head of document.querySelectorAll(".playhead")) {
+    head.style.left = `${(playhead / span) * 100}%`;
+  }
+}
+
+for (const [id, step] of [["pv-back", -1], ["pv-fwd", 1], ["pv-back10", -10], ["pv-fwd10", 10]]) {
+  $(id).addEventListener("click", () => showFrame(playhead + step));
+}
+$("pv-start").addEventListener("click", () => showFrame(0));
+$("pv-end").addEventListener("click", () => showFrame(Infinity));
+$("pv-frame").addEventListener("change", (e) => showFrame(Number(e.target.value) || 0));
+
 // -------------------------------------------------------------- timeline
 function timecode(frames, fps) {
   const total = Math.floor(frames / fps);
@@ -171,6 +237,7 @@ function timecode(frames, fps) {
 }
 
 function drawTimeline(tl, names = new Map()) {
+  currentTimeline = tl;
   $("tl-name").textContent = tl.name;
   $("tl-meta").textContent =
     `${tl.width}×${tl.height} · ${tl.fps} fps · ${timecode(tl.totalFrames, tl.fps)}`;
@@ -226,9 +293,18 @@ function drawTimeline(tl, names = new Map()) {
       el.textContent = label;
       lane.append(el);
     }
+    // Click anywhere on a lane to put the playhead there.
+    lane.addEventListener("click", (event) => {
+      const box = lane.getBoundingClientRect();
+      showFrame(((event.clientX - box.left) / box.width) * span);
+    });
+    const head = document.createElement("div");
+    head.className = "playhead";
+    lane.append(head);
     row.append(lane);
     host.append(row);
   }
+  drawPlayhead();
 }
 
 // ------------------------------------------------------------------ boot
