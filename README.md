@@ -10,18 +10,37 @@ Windows, Linux, and macOS. Free, and open source under GPLv3.
 
 ## Status
 
-**Layer 0, in development.** Nothing is usable yet.
+**Layer 0 works.** You can edit video by talking to your agent and watch the result.
 
 | | | |
 |---|---|---|
-| **L0** | MCP daemon — project model, edit commands, 13 tools, render via FFmpeg | in progress |
+| **L0** | MCP daemon — project model, edit commands, 14 tools, render via FFmpeg | **done** |
 | **L1** | Own compositor on wgpu; color, effects, keyframes | not started |
 | **L2** | The app — timeline, preview, inspector, export | not started |
 | **L3** | Multicam, local transcription, visual search, BYOK generation | not started |
 
+Linux and Windows are supported. macOS builds and tests in CI but is not a target.
+
+## Use it
+
+```bash
+cargo build --release
+./target/release/palmier serve
+```
+
+```bash
+claude mcp add --transport http palmier http://127.0.0.1:19789/mcp
+```
+
+Then talk to your agent: open a project, import footage, cut it, export it.
+
+```bash
+palmier inspect path/to/project.palmier
+```
+
 ## Build
 
-Requires a Rust toolchain and the `ffmpeg` binary on `PATH`.
+Requires a Rust toolchain, and `ffmpeg` and `ffprobe` on `PATH`.
 
 ```bash
 cargo build
