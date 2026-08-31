@@ -896,6 +896,7 @@ dependencies = [
  "clap",
  "palmier-core",
  "palmier-mcp",
+ "serde_json",
  "tokio",
  "tower-http 0.7.0",
  "tracing",

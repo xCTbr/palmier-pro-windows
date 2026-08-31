@@ -1003,3 +1003,19 @@ pub fn http_router() -> axum::Router {
     );
     axum::Router::new().nest_service("/mcp", service)
 }
+
+/// Serve MCP over stdin/stdout.
+///
+/// This is how a desktop client runs a local server: it spawns the process and speaks
+/// over the pipes. Claude Desktop's custom connectors require HTTPS, which a loopback
+/// server cannot offer and should not need, so stdio — not HTTP — is the supported
+/// transport there.
+///
+/// Nothing may be written to stdout except protocol traffic; a stray `println!` corrupts
+/// the stream.
+pub async fn serve_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use rmcp::ServiceExt;
+    let service = Palmier::new().serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
+    Ok(())
+}

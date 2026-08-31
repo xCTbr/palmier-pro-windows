@@ -28,6 +28,10 @@ enum Command {
     Serve {
         #[arg(long, default_value_t = palmier_mcp::DEFAULT_PORT)]
         port: u16,
+        /// Speak MCP over stdin/stdout instead of HTTP. This is how a desktop client
+        /// runs a local server: it spawns the process and talks over the pipes.
+        #[arg(long)]
+        stdio: bool,
     },
 }
 
@@ -98,7 +102,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Inspect { path } => ExitCode::from(inspect::run(&path) as u8),
-        Command::Serve { port } => {
+        Command::Serve { port, stdio } => {
             let runtime = match tokio::runtime::Runtime::new() {
                 Ok(runtime) => runtime,
                 Err(error) => {
@@ -106,7 +110,12 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            match runtime.block_on(serve::run(port)) {
+            let served = if stdio {
+                runtime.block_on(serve::run_stdio())
+            } else {
+                runtime.block_on(serve::run(port))
+            };
+            match served {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("palmier: {error:#}");

@@ -10,7 +10,8 @@ Rust workspace. GPLv3. Rebuilt from [Palmier Pro](https://github.com/palmier-io/
 
 ## Current state
 
-**Layer 0 is complete.** `palmier serve` exposes 15 MCP tools over loopback HTTP; a
+**Layer 0 is complete.** `palmier serve` exposes 15 MCP tools over loopback HTTP, or
+over stdio with `--stdio` for a desktop client that spawns the process itself; a
 project can be opened, edited, rendered, and saved. Specs 001–004 under `specs/` record
 what was built, what was audited from the original, and where this project deliberately
 diverges from it. Layer 1 is next; read the active spec before writing code.

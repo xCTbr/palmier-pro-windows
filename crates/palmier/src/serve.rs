@@ -32,3 +32,20 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
         .context("server stopped unexpectedly")?;
     Ok(())
 }
+
+/// Serve over stdin/stdout for a client that spawns this process.
+///
+/// Every diagnostic goes to stderr: stdout carries protocol frames, and one stray line
+/// there breaks the session.
+pub async fn run_stdio() -> anyhow::Result<()> {
+    let missing = crate::missing_tools();
+    if !missing.is_empty() {
+        eprintln!(
+            "palmier: warning — {} not on PATH. Editing works; rendering and media import do not.",
+            missing.join(" and ")
+        );
+    }
+    palmier_mcp::serve_stdio()
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))
+}
