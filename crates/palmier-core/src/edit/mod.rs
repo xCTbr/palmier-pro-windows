@@ -175,6 +175,27 @@ impl Receipt {
     fn skip(&mut self, target: impl Into<String>, why: impl Into<String>) {
         self.skipped.push((target.into(), why.into()));
     }
+
+    /// One id per list, in first-touched order. A clip can be touched twice by one
+    /// command — cleared then shifted — and the caller should hear about it once.
+    fn dedupe(&mut self) {
+        for list in [
+            &mut self.created_clip_ids,
+            &mut self.removed_clip_ids,
+            &mut self.changed_clip_ids,
+            &mut self.created_track_ids,
+            &mut self.removed_track_ids,
+            &mut self.changed_track_ids,
+        ] {
+            let mut seen = std::collections::HashSet::new();
+            list.retain(|id| seen.insert(id.clone()));
+        }
+        // A clip that was created and then removed by the same command never existed
+        // as far as the caller is concerned.
+        let removed: std::collections::HashSet<String> =
+            self.removed_clip_ids.iter().cloned().collect();
+        self.changed_clip_ids.retain(|id| !removed.contains(id));
+    }
 }
 
 /// The outcome of a plan phase: what to write, and how to reverse it.
@@ -221,7 +242,8 @@ impl EditSession {
         let index = self.active_timeline_index()?;
         let timeline = &mut self.project.timelines[index];
 
-        let plan = plan_command(timeline, &command)?;
+        let mut plan = plan_command(timeline, &command)?;
+        plan.receipt.dedupe();
         let receipt = plan.receipt.clone();
 
         if receipt.is_no_op() {
@@ -247,7 +269,8 @@ impl EditSession {
         let index = self.active_timeline_index().ok()?;
         let command = self.journal.peek_redo()?.command.clone();
         let timeline = &mut self.project.timelines[index];
-        let plan = plan_command(timeline, &command).ok()?;
+        let mut plan = plan_command(timeline, &command).ok()?;
+        plan.receipt.dedupe();
         let receipt = plan.receipt.clone();
         self.journal.commit_redo(plan.patch);
         Some(receipt)
